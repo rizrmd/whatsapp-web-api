@@ -15,6 +15,12 @@
 
 ## 📋 Requirements
 
+### **For Binary Users** (Recommended):
+- PostgreSQL 12+ (or cloud PostgreSQL service)
+- WhatsApp account with multi-device enabled
+- Linux/macOS/Windows operating system
+
+### **For Developers** (Build from source):
 - Go 1.24+
 - PostgreSQL 12+
 - WhatsApp account with multi-device enabled
@@ -46,28 +52,80 @@ GRANT ALL PRIVILEGES ON DATABASE whatsapp_db TO whatsapp_user;
 
 ## 🚀 Quick Start
 
+### **Option 1: Download Pre-built Binary (Recommended) 📦**
+
+No Go installation required! Just download the binary for your platform:
+
+1. **Download the binary**:
+   ```bash
+   # Linux (AMD64 - most common servers)
+   wget https://github.com/rizrmd/whatsapp-web-api/releases/download/v1.0.0/whatsapp-web-api-linux-amd64.zip
+   unzip whatsapp-web-api-linux-amd64.zip
+   chmod +x whatsapp-web-api-linux-amd64
+
+   # macOS (Intel)
+   curl -L -o whatsapp-web-api-darwin-amd64.zip https://github.com/rizrmd/whatsapp-web-api/releases/download/v1.0.0/whatsapp-web-api-darwin-amd64.zip
+   unzip whatsapp-web-api-darwin-amd64.zip
+   chmod +x whatsapp-web-api-darwin-amd64
+
+   # Windows (64-bit)
+   # Download: https://github.com/rizrmd/whatsapp-web-api/releases/download/v1.0.0/whatsapp-web-api-windows-amd64.exe.zip
+   # Extract and run whatsapp-web-api-windows-amd64.exe
+   ```
+
+2. **Configure environment**:
+   ```bash
+   # Copy example configuration
+   cp .env.example .env
+
+   # Edit .env with your database details
+   nano .env
+   ```
+
+3. **Run the server**:
+   ```bash
+   # Linux/macOS
+   ./whatsapp-web-api-linux-amd64
+   # or
+   ./whatsapp-web-api-darwin-amd64
+
+   # Windows
+   whatsapp-web-api-windows-amd64.exe
+   ```
+
+4. **Verify it's working**:
+   ```bash
+   curl http://localhost:8080/health
+   ```
+
+### **Option 2: Build from Source** 👨‍💻
+
+For developers who want to modify or build from source:
+
 1. **Clone and setup**:
    ```bash
-   git clone <your-repo>
+   git clone https://github.com/rizrmd/whatsapp-web-api.git
    cd whatsapp-web-api
    cp .env.example .env
    # Edit .env with your credentials
    ```
 
-2. **Install dependencies**:
+2. **Install Go** (if not installed):
+   ```bash
+   # Ubuntu/Debian
+   sudo apt install golang-go
+
+   # macOS
+   brew install go
+
+   # Or download from: https://golang.org/dl/
+   ```
+
+3. **Install dependencies and build**:
    ```bash
    go mod tidy
-   ```
-
-3. **Build and run**:
-   ```bash
    go build -o whatsapp-web-api .
    ./whatsapp-web-api
-   ```
-
-4. **Verify installation**:
-   ```bash
-   curl http://localhost:8080/health
    ```
 
 ## 📖 API Endpoints
@@ -156,6 +214,137 @@ GET /swagger.yaml
 ```
 
 Access API documentation and OpenAPI specification.
+
+## 💻 Binary Usage Guide
+
+### **Step-by-Step Binary Setup**
+
+1. **Download the right binary for your system**:
+
+| Platform | Architecture | Download Command |
+|----------|-------------|------------------|
+| **Linux** | AMD64 (most servers) | `wget https://github.com/rizrmd/whatsapp-web-api/releases/download/v1.0.0/whatsapp-web-api-linux-amd64.zip` |
+| **Linux** | ARM64 (AWS Graviton) | `wget https://github.com/rizrmd/whatsapp-web-api/releases/download/v1.0.0/whatsapp-web-api-linux-arm64.zip` |
+| **Linux** | 32-bit | `wget https://github.com/rizrmd/whatsapp-web-api/releases/download/v1.0.0/whatsapp-web-api-linux-386.zip` |
+| **macOS** | Intel | `curl -L -o mac.zip https://github.com/rizrmd/whatsapp-web-api/releases/download/v1.0.0/whatsapp-web-api-darwin-amd64.zip` |
+| **macOS** | Apple Silicon | `curl -L -o mac.zip https://github.com/rizrmd/whatsapp-web-api/releases/download/v1.0.0/whatsapp-web-api-darwin-arm64.zip` |
+| **Windows** | 64-bit | Download: [whatsapp-web-api-windows-amd64.exe.zip](https://github.com/rizrmd/whatsapp-web-api/releases/download/v1.0.0/whatsapp-web-api-windows-amd64.exe.zip) |
+| **Windows** | 32-bit | Download: [whatsapp-web-api-windows-386.exe.zip](https://github.com/rizrmd/whatsapp-web-api/releases/download/v1.0.0/whatsapp-web-api-windows-386.exe.zip) |
+
+2. **Extract and make executable**:
+   ```bash
+   # For Linux/macOS
+   unzip whatsapp-web-api-linux-amd64.zip
+   chmod +x whatsapp-web-api-linux-amd64
+
+   # For Windows - just unzip the .exe file
+   # No additional steps needed
+   ```
+
+3. **Set up environment**:
+   ```bash
+   # Create environment file
+   nano .env
+   ```
+
+   **Add your database configuration**:
+   ```env
+   DATABASE_URL=postgres://username:password@localhost:5432/whatsapp_db
+   PORT=8080
+   WA_WEBHOOK_URL=https://your-webhook.com/webhook
+   ```
+
+4. **Run the API server**:
+   ```bash
+   # Linux/macOS
+   ./whatsapp-web-api-linux-amd64
+
+   # Windows
+   whatsapp-web-api-windows-amd64.exe
+   ```
+
+5. **Pair with WhatsApp**:
+   ```bash
+   # Get QR code for pairing
+   curl http://localhost:8080/pair
+   ```
+
+6. **Start sending messages**:
+   ```bash
+   # Send a message
+   curl -X POST http://localhost:8080/send \
+     -H "Content-Type: application/json" \
+     -d '{"number":"1234567890","message":"Hello from binary!"}'
+   ```
+
+### **Production Deployment with Binary**
+
+#### **Manual Systemd Service Setup**:
+```bash
+# 1. Move binary to system location
+sudo mv whatsapp-web-api-linux-amd64 /opt/whatsapp-api/whatsapp-web-api
+sudo chmod +x /opt/whatsapp-api/whatsapp-web-api
+
+# 2. Create service user
+sudo useradd -r -s /bin/false whatsapp-api
+
+# 3. Create environment file
+sudo nano /opt/whatsapp-api/.env
+# Add your DATABASE_URL and other vars
+
+# 4. Create systemd service
+sudo nano /etc/systemd/system/whatsapp-api.service
+```
+
+**Service file content**:
+```ini
+[Unit]
+Description=WhatsApp Web API
+After=network.target
+
+[Service]
+Type=simple
+User=whatsapp-api
+WorkingDirectory=/opt/whatsapp-api
+ExecStart=/opt/whatsapp-api/whatsapp-web-api
+Restart=always
+RestartSec=10
+EnvironmentFile=/opt/whatsapp-api/.env
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+# 5. Start and enable service
+sudo systemctl daemon-reload
+sudo systemctl start whatsapp-api
+sudo systemctl enable whatsapp-api
+
+# 6. Check status
+sudo systemctl status whatsapp-api
+```
+
+#### **Automated Deployment** (included with binary):
+```bash
+# Download and run the automated deployment script
+wget https://github.com/rizrmd/whatsapp-web-api/releases/download/v1.0.0/whatsapp-web-api-linux-amd64.zip
+unzip whatsapp-web-api-linux-amd64.zip
+DATABASE_URL="postgres://user:pass@host:5432/db" sudo ./deploy-linux.sh
+```
+
+### **Binary Verification (Security)**
+
+Always verify downloaded binaries:
+
+```bash
+# Download checksums
+wget https://github.com/rizrmd/whatsapp-web-api/releases/download/v1.0.0/checksums.txt
+
+# Verify your binary
+sha256sum whatsapp-web-api-linux-amd64.zip
+# Compare with the value in checksums.txt
+```
 
 ## 💻 Usage Examples
 
