@@ -14,25 +14,25 @@ import (
 	"syscall"
 	"time"
 
-	"go.mau.fi/whatsmeow"
-	"go.mau.fi/whatsmeow/store/sqlstore"
-	"go.mau.fi/whatsmeow/types/events"
-	waLog "go.mau.fi/whatsmeow/util/log"
 	"github.com/gorilla/mux"
 	"github.com/joho/godotenv"
-	"google.golang.org/protobuf/proto"
 	"github.com/skip2/go-qrcode"
+	"go.mau.fi/whatsmeow"
 	waProto "go.mau.fi/whatsmeow/binary/proto"
+	"go.mau.fi/whatsmeow/store/sqlstore"
 	"go.mau.fi/whatsmeow/types"
+	"go.mau.fi/whatsmeow/types/events"
+	waLog "go.mau.fi/whatsmeow/util/log"
+	"google.golang.org/protobuf/proto"
 
 	_ "github.com/lib/pq"
 )
 
 var (
-	client      *whatsmeow.Client
-	qrChannel   chan string
-	webhookURL  string
-	isPaired    bool = false
+	client     *whatsmeow.Client
+	qrChannel  chan string
+	webhookURL string
+	isPaired   bool = false
 )
 
 // Response structures for API
@@ -224,10 +224,10 @@ func pairHandler(w http.ResponseWriter, r *http.Request) {
 					Success: true,
 					Message: "QR code generated successfully",
 					Data: map[string]interface{}{
-						"qr_code":      qrCode,
-						"qr_image_url": qrImageURL,
+						"qr_code":        qrCode,
+						"qr_image_url":   qrImageURL,
 						"image_endpoint": "/pair?format=image",
-						"expires_in":   evt.Timeout,
+						"expires_in":     evt.Timeout,
 					},
 				}
 				w.Header().Set("Content-Type", "application/json")
@@ -361,7 +361,7 @@ func sendHandler(w http.ResponseWriter, r *http.Request) {
 		Success: true,
 		Message: "Message sent successfully",
 		Data: map[string]string{
-			"number": req.Number,
+			"number":  req.Number,
 			"message": req.Message,
 		},
 	}
@@ -373,8 +373,8 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
 	status := map[string]interface{}{
-		"paired": isPaired,
-		"connected": client != nil && client.IsConnected(),
+		"paired":             isPaired,
+		"connected":          client != nil && client.IsConnected(),
 		"webhook_configured": webhookURL != "",
 	}
 
@@ -402,7 +402,7 @@ func swaggerHandler(w http.ResponseWriter, r *http.Request) {
 			"docs":    "GET  /swagger.yaml - Full OpenAPI specification",
 		},
 		"documentation": "Full API documentation available at /swagger.yaml",
-		"swagger_ui": "Use Swagger UI with the yaml file: https://editor.swagger.io/",
+		"swagger_ui":    "Use Swagger UI with the yaml file: https://editor.swagger.io/",
 	}
 
 	response := APIResponse{
@@ -455,6 +455,20 @@ func handleMessage(evt *events.Message) {
 	// Send to webhook if configured
 	if webhookURL != "" {
 		sendToWebhook("message", messageContent, evt.Info.Sender.String(), evt.Info.Chat.String())
+	}
+
+	// Mark message as read
+	err := client.MarkRead(
+		[]types.MessageID{evt.Info.ID},
+		time.Now(),
+		evt.Info.Chat,
+		evt.Info.Sender,
+		types.ReceiptTypeRead,
+	)
+	if err != nil {
+		log.Printf("Failed to mark message as read: %v", err)
+	} else {
+		log.Printf("Message marked as read successfully")
 	}
 
 	log.Printf("Message content: %s\n", messageContent)
