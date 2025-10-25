@@ -138,8 +138,8 @@ func pairHandler(w http.ResponseWriter, r *http.Request) {
 		(acceptHeader != "" && acceptHeader != "application/json" && acceptHeader != "*/*") ||
 		(queryFormat == "image")
 
-	// If already paired, disconnect first
-	if isPaired && client.IsConnected() {
+	// If already paired or connected, disconnect and clear session first
+	if client.IsConnected() {
 		client.Disconnect()
 		isPaired = false
 		log.Println("Disconnected from previous session")
@@ -153,6 +153,9 @@ func pairHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Add a small delay to ensure proper disconnection
+	time.Sleep(1 * time.Second)
+
 	// Get QR channel (must be called before connecting)
 	qrChan, err := client.GetQRChannel(context.Background())
 	if err != nil {
@@ -163,6 +166,7 @@ func pairHandler(w http.ResponseWriter, r *http.Request) {
 				Success: false,
 				Message: fmt.Sprintf("Failed to get QR channel: %v", err),
 			}
+			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(response)
 		}
 		return
