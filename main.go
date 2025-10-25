@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"image/png"
 	"log"
 	"net/http"
 	"net/url"
@@ -20,6 +21,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/joho/godotenv"
 	"google.golang.org/protobuf/proto"
+	"github.com/skip2/go-qrcode"
 	waProto "go.mau.fi/whatsmeow/binary/proto"
 	"go.mau.fi/whatsmeow/types"
 
@@ -128,7 +130,13 @@ func initializeWhatsApp() {
 
 // /pair endpoint - generate QR code for pairing
 func pairHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
+	// Check if user wants image response (via Accept header or query parameter)
+	acceptHeader := r.Header.Get("Accept")
+	queryFormat := r.URL.Query().Get("format")
+
+	wantsImage := (acceptHeader == "image/png") ||
+		(acceptHeader != "" && acceptHeader != "application/json" && acceptHeader != "*/*") ||
+		(queryFormat == "image")
 
 	// If already paired, disconnect first
 	if isPaired && client.IsConnected() {
@@ -145,25 +153,33 @@ func pairHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Get QR channel
+	// Get QR channel (must be called before connecting)
 	qrChan, err := client.GetQRChannel(context.Background())
 	if err != nil {
-		response := APIResponse{
-			Success: false,
-			Message: fmt.Sprintf("Failed to get QR channel: %v", err),
+		if wantsImage {
+			http.Error(w, fmt.Sprintf("Failed to get QR channel: %v", err), http.StatusInternalServerError)
+		} else {
+			response := APIResponse{
+				Success: false,
+				Message: fmt.Sprintf("Failed to get QR channel: %v", err),
+			}
+			json.NewEncoder(w).Encode(response)
 		}
-		json.NewEncoder(w).Encode(response)
 		return
 	}
 
-	// Connect client
+	// Connect client after getting QR channel
 	err = client.Connect()
 	if err != nil {
-		response := APIResponse{
-			Success: false,
-			Message: fmt.Sprintf("Failed to connect: %v", err),
+		if wantsImage {
+			http.Error(w, fmt.Sprintf("Failed to connect: %v", err), http.StatusInternalServerError)
+		} else {
+			response := APIResponse{
+				Success: false,
+				Message: fmt.Sprintf("Failed to connect: %v", err),
+			}
+			json.NewEncoder(w).Encode(response)
 		}
-		json.NewEncoder(w).Encode(response)
 		return
 	}
 
@@ -173,37 +189,74 @@ func pairHandler(w http.ResponseWriter, r *http.Request) {
 		if evt.Event == "code" {
 			qrCode := evt.Code
 
-			// Generate QR code image URL
-			qrImageURL := fmt.Sprintf("https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=%s", qrCode)
+			if wantsImage {
+				// Generate QR code as PNG image
+				qr, err := qrcode.New(qrCode, qrcode.Medium)
+				if err != nil {
+					http.Error(w, fmt.Sprintf("Failed to generate QR code: %v", err), http.StatusInternalServerError)
+					return
+				}
 
-			response := APIResponse{
-				Success: true,
-				Message: "QR code generated successfully",
-				Data: map[string]interface{}{
-					"qr_code":      qrCode,
-					"qr_image_url": qrImageURL,
-					"expires_in":   evt.Timeout,
-				},
+				// Set content type for PNG image
+				w.Header().Set("Content-Type", "image/png")
+				w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+				w.Header().Set("Pragma", "no-cache")
+				w.Header().Set("Expires", "0")
+
+				// Encode and send the image
+				err = png.Encode(w, qr.Image(256))
+				if err != nil {
+					http.Error(w, fmt.Sprintf("Failed to encode QR image: %v", err), http.StatusInternalServerError)
+					return
+				}
+
+				log.Println("QR code image generated successfully")
+				return
+			} else {
+				// Return JSON response with QR code info
+				qrImageURL := fmt.Sprintf("https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=%s", qrCode)
+
+				response := APIResponse{
+					Success: true,
+					Message: "QR code generated successfully",
+					Data: map[string]interface{}{
+						"qr_code":      qrCode,
+						"qr_image_url": qrImageURL,
+						"image_endpoint": "/pair?format=image",
+						"expires_in":   evt.Timeout,
+					},
+				}
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(response)
+
+				// Handle QR events in background
+				go handleQREvents(qrChan)
+				return
 			}
-			json.NewEncoder(w).Encode(response)
-
-			// Handle QR events in background
-			go handleQREvents(qrChan)
-			return
 		} else {
-			response := APIResponse{
-				Success: false,
-				Message: fmt.Sprintf("QR generation error: %s", evt.Event),
+			if wantsImage {
+				http.Error(w, fmt.Sprintf("QR generation error: %s", evt.Event), http.StatusInternalServerError)
+			} else {
+				response := APIResponse{
+					Success: false,
+					Message: fmt.Sprintf("QR generation error: %s", evt.Event),
+				}
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(response)
 			}
-			json.NewEncoder(w).Encode(response)
 			return
 		}
 	case <-time.After(10 * time.Second):
-		response := APIResponse{
-			Success: false,
-			Message: "QR code generation timeout",
+		if wantsImage {
+			http.Error(w, "QR code generation timeout", http.StatusRequestTimeout)
+		} else {
+			response := APIResponse{
+				Success: false,
+				Message: "QR code generation timeout",
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(response)
 		}
-		json.NewEncoder(w).Encode(response)
 		return
 	}
 }
