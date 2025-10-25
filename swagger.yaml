@@ -1,0 +1,272 @@
+openapi: 3.0.0
+info:
+  title: WhatsApp Web API
+  description: A REST API for WhatsApp Web integration that allows pairing, sending messages, and receiving webhooks for incoming messages.
+  version: 1.0.0
+  contact:
+    name: WhatsApp Web API
+    email: support@example.com
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: http://localhost:8080
+    description: Development server
+  - url: https://your-domain.com
+    description: Production server
+
+paths:
+  /pair:
+    get:
+      tags:
+        - WhatsApp Pairing
+      summary: Generate QR code for WhatsApp pairing
+      description: |
+        Generates a new QR code for pairing with WhatsApp. This will disconnect any existing session and create a new pairing session.
+
+        The QR code should be scanned with WhatsApp app (WhatsApp > Linked Devices > Link a device).
+
+        Note: Pairing will replace any existing paired account.
+      operationId: pairWhatsApp
+      responses:
+        '200':
+          description: QR code generated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PairResponse'
+              example:
+                success: true
+                message: "QR code generated successfully"
+                data:
+                  qr_code: "3-4|1|2|3|4|5|6|7|8|9|0|1|2|3|4|5|6|7|8|9|0"
+                  qr_image_url: "https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=3-4%7C1%7C2%7C3%7C4%7C5%7C6%7C7%7C8%7C9%7C0%7C1%7C2%7C3%7C4%7C5%7C6%7C7%7C8%7C9%7C0"
+                  expires_in: 60
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /send:
+    post:
+      tags:
+        - Messaging
+      summary: Send message to WhatsApp number
+      description: |
+        Sends a text message to a WhatsApp number. The service must be paired with WhatsApp before using this endpoint.
+
+        The phone number should include the country code without the '+' prefix (e.g., "1234567890" for +1 234-567-890).
+      operationId: sendMessage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendMessageRequest'
+            example:
+              number: "1234567890"
+              message: "Hello from WhatsApp API!"
+      responses:
+        '200':
+          description: Message sent successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SendMessageResponse'
+              example:
+                success: true
+                message: "Message sent successfully"
+                data:
+                  number: "1234567890"
+                  message: "Hello from WhatsApp API!"
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '422':
+          description: Not paired with WhatsApp
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: "Not paired with WhatsApp. Please use /pair endpoint first"
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /health:
+    get:
+      tags:
+        - System
+      summary: Check service health and status
+      description: Returns the current status of the WhatsApp service including pairing status and webhook configuration.
+      operationId: healthCheck
+      responses:
+        '200':
+          description: Service status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+              example:
+                success: true
+                message: "WhatsApp service is running"
+                data:
+                  paired: true
+                  connected: true
+                  webhook_configured: true
+
+components:
+  schemas:
+    PairResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          description: Whether the QR code was generated successfully
+        message:
+          type: string
+          description: Response message
+        data:
+          type: object
+          description: QR code data
+          properties:
+            qr_code:
+              type: string
+              description: The raw QR code string for manual scanning
+              example: "3-4|1|2|3|4|5|6|7|8|9|0|1|2|3|4|5|6|7|8|9|0"
+            qr_image_url:
+              type: string
+              description: URL to QR code image (300x300 PNG)
+              example: "https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=3-4%7C1%7C2%7C3%7C4%7C5%7C6%7C7%7C8%7C9%7C0%7C1%7C2%7C3%7C4%7C5%7C6%7C7%7C8%7C9%7C0"
+            expires_in:
+              type: integer
+              description: QR code expiration time in seconds
+              example: 60
+
+    SendMessageRequest:
+      type: object
+      required:
+        - number
+        - message
+      properties:
+        number:
+          type: string
+          description: WhatsApp phone number with country code (without '+')
+          example: "1234567890"
+          pattern: '^[0-9]{10,15}$'
+        message:
+          type: string
+          description: Message content to send
+          example: "Hello from WhatsApp API!"
+          maxLength: 4096
+
+    SendMessageResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          description: Whether the message was sent successfully
+        message:
+          type: string
+          description: Response message
+        data:
+          type: object
+          description: Sent message details
+          properties:
+            number:
+              type: string
+              description: The phone number the message was sent to
+            message:
+              type: string
+              description: The message content that was sent
+
+    HealthResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          description: Always true for health endpoint
+        message:
+          type: string
+          description: Status message
+        data:
+          type: object
+          properties:
+            paired:
+              type: boolean
+              description: Whether WhatsApp is paired
+            connected:
+              type: boolean
+              description: Whether WhatsApp client is connected
+            webhook_configured:
+              type: boolean
+              description: Whether webhook URL is configured
+
+    ErrorResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        message:
+          type: string
+          description: Error message
+        data:
+          type: object
+          description: Additional error data (optional)
+
+  responses:
+    BadRequest:
+      description: Bad request - invalid parameters or request body
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            message: "Number and message are required"
+
+    MethodNotAllowed:
+      description: Method not allowed - use POST for this endpoint
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            message: "Method not allowed. Use POST"
+
+    InternalServerError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            message: "Internal server error occurred"
+
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: Authorization
+      description: API key for authentication (optional, not implemented)
+
+security:
+  - ApiKeyAuth: []
+
+tags:
+  - name: WhatsApp Pairing
+    description: WhatsApp device pairing and session management
+  - name: Messaging
+    description: Sending and managing WhatsApp messages
+  - name: System
+    description: System health and status information
+
+externalDocs:
+  description: WhatsApp Web API Documentation
+  url: https://github.com/your-repo/whatsapp-web-api
