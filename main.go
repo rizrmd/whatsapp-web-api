@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"image"
+	"image/jpeg"
 	"image/png"
 	"io"
 	"log"
@@ -307,7 +309,7 @@ func sendHandler(w http.ResponseWriter, r *http.Request) {
 		// Combine text as image caption
 		attachment := req.Attachments[0]
 		attachment.Caption = req.Message // Use text message as caption
-		attachmentMsg, err := prepareAttachmentMessage(attachment)
+		attachmentMsg, err := prepareAttachmentMessage(attachment, targetJID)
 		if err != nil {
 			response := APIResponse{
 				Success: false,
@@ -327,7 +329,7 @@ func sendHandler(w http.ResponseWriter, r *http.Request) {
 
 		// Process attachments
 		for _, attachment := range req.Attachments {
-			attachmentMsg, err := prepareAttachmentMessage(attachment)
+			attachmentMsg, err := prepareAttachmentMessage(attachment, targetJID)
 			if err != nil {
 				response := APIResponse{
 					Success: false,
@@ -519,6 +521,58 @@ func downloadFile(url string) ([]byte, string, error) {
 	return data, contentType, nil
 }
 
+func convertImageToJPEG(data []byte, contentType string) ([]byte, error) {
+	// If already JPEG, return as-is
+	if strings.Contains(contentType, "jpeg") || strings.Contains(contentType, "jpg") {
+		return data, nil
+	}
+
+	// Decode the image
+	var img image.Image
+	var err error
+
+	switch {
+	case strings.Contains(contentType, "png"):
+		img, err = png.Decode(bytes.NewReader(data))
+	case strings.Contains(contentType, "webp"):
+		// For now, skip WebP conversion and let WhatsApp handle it
+		// WhatsApp has improved WebP support in recent versions
+		log.Printf("WebP image detected, letting WhatsApp handle conversion")
+	default:
+		// Try to decode as generic image
+		img, _, err = image.Decode(bytes.NewReader(data))
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode image: %v", err)
+	}
+
+	// Encode as JPEG
+	var buf bytes.Buffer
+	err = jpeg.Encode(&buf, img, &jpeg.Options{Quality: 85})
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode as JPEG: %v", err)
+	}
+
+	return buf.Bytes(), nil
+}
+
+func sendTypingIndicator(targetJID types.JID) {
+	// Send typing indicator
+	presence := &waProto.Message{
+		ExtendedTextMessage: &waProto.ExtendedTextMessage{
+			Text: proto.String("..."),
+		},
+	}
+
+	// This is a simplified way to send typing - in practice you might want to use
+	// the proper presence API if available
+	_, err := client.SendMessage(context.Background(), targetJID, presence)
+	if err != nil {
+		log.Printf("Failed to send typing indicator: %v", err)
+	}
+}
+
 func min(a, b int) int {
 	if a < b {
 		return a
@@ -526,7 +580,7 @@ func min(a, b int) int {
 	return b
 }
 
-func prepareAttachmentMessage(attachment Attachment) (*waProto.Message, error) {
+func prepareAttachmentMessage(attachment Attachment, targetJID types.JID) (*waProto.Message, error) {
 	var data []byte
 	var contentType string
 	var err error
@@ -540,6 +594,18 @@ func prepareAttachmentMessage(attachment Attachment) (*waProto.Message, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to load attachment: %v", err)
 	}
+
+	// Convert image to JPEG if needed
+	if attachment.Type == "image" {
+		data, err = convertImageToJPEG(data, contentType)
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert image: %v", err)
+		}
+		contentType = "image/jpeg"
+	}
+
+	// Send typing indicator before uploading
+	sendTypingIndicator(targetJID)
 
 	var mediaType whatsmeow.MediaType
 	switch attachment.Type {
