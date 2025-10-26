@@ -2,16 +2,38 @@
 
 🚀 A production-ready REST API for WhatsApp Web integration that enables programmatic sending of messages, QR code pairing, and webhook-based message reception.
 
+## 📋 Changelog
+
+### **v1.3.0** (Latest) - Enhanced Image Sending
+- ✨ **Combined Messages**: Text + single image now sends as one message with caption
+- 🐛 **Fixed Image Display**: Resolved image rendering issues with proper DirectPath handling
+- 🔗 **URL-Only Attachments**: Removed base64 support, requires HTTP/HTTPS URLs only
+- 📦 **Linux Builds**: Automated releases for amd64, arm64, 386 architectures
+- 🔧 **Simplified QR Code**: Endpoint now returns PNG image directly
+- 📊 **Version Info**: Added version display to health endpoint
+
+### **v1.2.0** - Attachment Support
+- ✨ Added support for images, documents, audio, and video attachments
+- 🪝 Enhanced webhook functionality
+- 📚 Comprehensive API documentation
+
+### **v1.1.0** - Core Features
+- ✨ Basic message sending and QR code pairing
+- 🗄️ PostgreSQL session storage
+- 🔄 Session management
+
 ## ✨ Features
 
 - **📱 QR Code Pairing**: Generate QR codes to pair WhatsApp accounts
 - **💬 Message Sending**: Send text messages and attachments (images, documents, audio, video) to any WhatsApp number via REST API
+- **🖼️ Smart Image Handling**: Combines text + single image into one message with caption
 - **🪝 Webhook Support**: Receive incoming messages via HTTP webhooks
 - **🗄️ PostgreSQL Storage**: Secure WhatsApp session persistence in PostgreSQL
 - **🔒 Auto SSL Handling**: Automatically configures PostgreSQL SSL mode
 - **📚 Complete Documentation**: Full OpenAPI 3.0 / Swagger specification
 - **🔄 Session Management**: Automatic reconnection and session handling
 - **⚡ High Performance**: Concurrent message handling and graceful shutdown
+- **🔗 URL-Only Attachments**: Secure attachment handling via HTTP/HTTPS URLs only
 
 ## 📋 Requirements
 
@@ -183,21 +205,22 @@ Content-Type: application/json
 
 Send a text message and/or attachments to a WhatsApp number.
 
+**Smart Message Handling**:
+- **Text + Single Image** → Combined into one message (text becomes image caption)
+- **Text + Multiple Images** → Sent as separate messages
+- **Only Text** → Text message
+- **Only Image** → Image message
+
 **Request Body**:
 ```json
 {
   "number": "1234567890",
-  "message": "Hello from WhatsApp API!",
+  "message": "Check out this amazing photo!",
   "attachments": [
     {
       "type": "image",
-        "url": "https://picsum.photos/800/600",
-      "caption": "Check out this image!"
-    },
-    {
-      "type": "document",
-      "url": "https://example.com/document.pdf",
-      "filename": "document.pdf"
+      "url": "https://picsum.photos/800/600",
+      "caption": "This caption will be replaced by the message text"
     }
   ]
 }
@@ -208,9 +231,9 @@ Send a text message and/or attachments to a WhatsApp number.
 - `message` (string, optional): Message text (max 4096 characters)
 - `attachments` (array, optional): Array of attachment objects
   - `type` (string, required): Attachment type - "image", "document", "audio", "video"
-  - `url` (string, required): **Publicly accessible HTTP/HTTPS URL** for the attachment (not base64 data)
+  - `url` (string, required): **Publicly accessible HTTP/HTTPS URL** for the attachment
   - `filename` (string, optional): Filename for documents
-  - `caption` (string, optional): Caption for images/videos
+  - `caption` (string, optional): Caption for images/videos (ignored for single image + text)
 
 **Response**:
 ```json
@@ -619,6 +642,8 @@ psql $DATABASE_URL
 - ✅ Check webhook status if messages aren't being received
 - ✅ **Important**: Attachment URLs must be publicly accessible HTTP/HTTPS links (not base64 data)
 - ✅ Test attachment URLs in browser to ensure they're accessible
+- ✅ For single image + text: Text becomes image caption (combined message)
+- ✅ For multiple images: Each image sends as separate message
 
 ### Server Issues
 ```bash
