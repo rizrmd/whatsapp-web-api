@@ -27,6 +27,7 @@ import (
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 	waLog "go.mau.fi/whatsmeow/util/log"
+	"golang.org/x/image/webp"
 	"google.golang.org/protobuf/proto"
 
 	_ "github.com/lib/pq"
@@ -342,6 +343,9 @@ func sendHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Send typing indicator before sending messages
+	sendTypingIndicator(targetJID)
+
 	// Send all messages
 	var sentMessages []map[string]interface{}
 	for i, msg := range messages {
@@ -527,7 +531,7 @@ func convertImageToJPEG(data []byte, contentType string) ([]byte, error) {
 		return data, nil
 	}
 
-	// Decode the image
+	// Decode image
 	var img image.Image
 	var err error
 
@@ -535,9 +539,7 @@ func convertImageToJPEG(data []byte, contentType string) ([]byte, error) {
 	case strings.Contains(contentType, "png"):
 		img, err = png.Decode(bytes.NewReader(data))
 	case strings.Contains(contentType, "webp"):
-		// For now, skip WebP conversion and let WhatsApp handle it
-		// WhatsApp has improved WebP support in recent versions
-		log.Printf("WebP image detected, letting WhatsApp handle conversion")
+		img, err = webp.Decode(bytes.NewReader(data))
 	default:
 		// Try to decode as generic image
 		img, _, err = image.Decode(bytes.NewReader(data))
@@ -547,6 +549,11 @@ func convertImageToJPEG(data []byte, contentType string) ([]byte, error) {
 		return nil, fmt.Errorf("failed to decode image: %v", err)
 	}
 
+	// Check if image is valid before encoding
+	if img == nil {
+		return nil, fmt.Errorf("decoded image is nil")
+	}
+
 	// Encode as JPEG
 	var buf bytes.Buffer
 	err = jpeg.Encode(&buf, img, &jpeg.Options{Quality: 85})
@@ -554,22 +561,24 @@ func convertImageToJPEG(data []byte, contentType string) ([]byte, error) {
 		return nil, fmt.Errorf("failed to encode as JPEG: %v", err)
 	}
 
+	log.Printf("Successfully converted %s to JPEG", contentType)
 	return buf.Bytes(), nil
 }
 
 func sendTypingIndicator(targetJID types.JID) {
-	// Send typing indicator
-	presence := &waProto.Message{
-		ExtendedTextMessage: &waProto.ExtendedTextMessage{
-			Text: proto.String("..."),
-		},
+	// Send chat state (composing) to indicate typing
+	chatJID := targetJID.ToNonAD()
+	if chatJID.Server == "g.us" {
+		// For group chats, use the group JID directly
+		chatJID = targetJID
 	}
 
-	// This is a simplified way to send typing - in practice you might want to use
-	// the proper presence API if available
-	_, err := client.SendMessage(context.Background(), targetJID, presence)
+	// Send composing presence
+	err := client.SendChatPresence(chatJID, types.ChatPresenceComposing, types.ChatPresenceMediaText)
 	if err != nil {
 		log.Printf("Failed to send typing indicator: %v", err)
+	} else {
+		log.Printf("Typing indicator sent to %s", chatJID.String())
 	}
 }
 
@@ -603,9 +612,6 @@ func prepareAttachmentMessage(attachment Attachment, targetJID types.JID) (*waPr
 		}
 		contentType = "image/jpeg"
 	}
-
-	// Send typing indicator before uploading
-	sendTypingIndicator(targetJID)
 
 	var mediaType whatsmeow.MediaType
 	switch attachment.Type {
