@@ -38,7 +38,7 @@ var (
 	qrChannel  chan string
 	webhookURL string
 	isPaired   bool   = false
-	version    string = "v1.4.0"
+	version    string = "v1.5.0"
 )
 
 // Response structures for API
@@ -62,11 +62,12 @@ type SendRequest struct {
 }
 
 type WebhookPayload struct {
-	Event   string    `json:"event"`
-	Message string    `json:"message,omitempty"`
-	Sender  string    `json:"sender,omitempty"`
-	Chat    string    `json:"chat,omitempty"`
-	Time    time.Time `json:"time"`
+	Event      string                 `json:"event"`
+	Message    string                 `json:"message,omitempty"`
+	Sender     string                 `json:"sender,omitempty"`
+	Chat       string                 `json:"chat,omitempty"`
+	Time       time.Time              `json:"time"`
+	Attachment map[string]interface{} `json:"attachment,omitempty"`
 }
 
 func getDatabaseURL() string {
@@ -464,27 +465,7 @@ func handleMessage(evt *events.Message) {
 		return
 	}
 
-	// Log message reception
-	log.Printf("Received message from %s (Chat: %s)\n", evt.Info.Sender.String(), evt.Info.Chat.String())
-
-	// Extract message content
-	var messageContent string
-	if evt.Message != nil {
-		if evt.Message.Conversation != nil && *evt.Message.Conversation != "" {
-			messageContent = *evt.Message.Conversation
-		} else if evt.Message.ExtendedTextMessage != nil && evt.Message.ExtendedTextMessage.Text != nil {
-			messageContent = *evt.Message.ExtendedTextMessage.Text
-		} else {
-			messageContent = "Non-text message received"
-		}
-	}
-
-	// Send to webhook if configured
-	if webhookURL != "" {
-		sendToWebhook("message", messageContent, evt.Info.Sender.String(), evt.Info.Chat.String())
-	}
-
-	// Mark message as read
+	// Mark message as read FIRST
 	err := client.MarkRead(
 		[]types.MessageID{evt.Info.ID},
 		time.Now(),
@@ -498,7 +479,110 @@ func handleMessage(evt *events.Message) {
 		log.Printf("Message marked as read successfully")
 	}
 
+	// Log message reception
+	log.Printf("Received message from %s (Chat: %s)\n", evt.Info.Sender.String(), evt.Info.Chat.String())
+
+	// Extract message content and handle automatic image download
+	var messageContent string
+	var imageInfo map[string]interface{}
+
+	if evt.Message != nil {
+		if evt.Message.Conversation != nil && *evt.Message.Conversation != "" {
+			messageContent = *evt.Message.Conversation
+		} else if evt.Message.ExtendedTextMessage != nil && evt.Message.ExtendedTextMessage.Text != nil {
+			messageContent = *evt.Message.ExtendedTextMessage.Text
+		} else if evt.Message.ImageMessage != nil {
+			// Handle image message
+			imgMsg := evt.Message.ImageMessage
+			caption := ""
+			if imgMsg.Caption != nil {
+				caption = *imgMsg.Caption
+			}
+			messageContent = fmt.Sprintf("Image received%s", func() string {
+				if caption != "" {
+					return fmt.Sprintf(": %s", caption)
+				}
+				return ""
+			}())
+
+			// Automatically download the image
+			go func() {
+				err := downloadAndSaveImage(evt.Info.ID, imgMsg)
+				if err != nil {
+					log.Printf("Failed to download image: %v", err)
+				} else {
+					log.Printf("Image downloaded successfully")
+				}
+			}()
+
+			// Store image info for webhook
+			imageInfo = map[string]interface{}{
+				"type":        "image",
+				"caption":     caption,
+				"mimetype":    imgMsg.Mimetype,
+				"file_length": imgMsg.FileLength,
+			}
+		} else if evt.Message.DocumentMessage != nil {
+			docMsg := evt.Message.DocumentMessage
+			title := ""
+			if docMsg.Title != nil {
+				title = *docMsg.Title
+			}
+			messageContent = fmt.Sprintf("Document received: %s", title)
+		} else if evt.Message.AudioMessage != nil {
+			messageContent = "Audio message received"
+		} else if evt.Message.VideoMessage != nil {
+			vidMsg := evt.Message.VideoMessage
+			caption := ""
+			if vidMsg.Caption != nil {
+				caption = *vidMsg.Caption
+			}
+			messageContent = fmt.Sprintf("Video received%s", func() string {
+				if caption != "" {
+					return fmt.Sprintf(": %s", caption)
+				}
+				return ""
+			}())
+		} else {
+			messageContent = "Non-text message received"
+		}
+	}
+
+	// Send to webhook if configured
+	if webhookURL != "" {
+		sendToWebhook("message", messageContent, evt.Info.Sender.String(), evt.Info.Chat.String(), imageInfo)
+	}
+
 	log.Printf("Message content: %s\n", messageContent)
+}
+
+func downloadAndSaveImage(messageID types.MessageID, imgMsg *waProto.ImageMessage) error {
+	if imgMsg.URL == nil || imgMsg.DirectPath == nil {
+		return fmt.Errorf("image URL or DirectPath is nil")
+	}
+
+	// Download the image using the client's built-in downloader
+	data, err := client.Download(context.Background(), imgMsg)
+	if err != nil {
+		return fmt.Errorf("failed to download image: %v", err)
+	}
+
+	log.Printf("Downloaded image data: %d bytes", len(data))
+
+	// Optionally save to file (you can customize this path)
+	filename := fmt.Sprintf("downloads/%s.jpg", messageID)
+	err = os.MkdirAll("downloads", 0755)
+	if err != nil {
+		return fmt.Errorf("failed to create downloads directory: %v", err)
+	}
+
+	err = os.WriteFile(filename, data, 0644)
+	if err != nil {
+		return fmt.Errorf("failed to save image file: %v", err)
+	}
+
+	log.Printf("Image saved to: %s", filename)
+	return nil
 }
 
 func downloadFile(url string) ([]byte, string, error) {
@@ -693,13 +777,14 @@ func prepareAttachmentMessage(attachment Attachment, targetJID types.JID) (*waPr
 	}
 }
 
-func sendToWebhook(event, message, sender, chat string) {
+func sendToWebhook(event, message, sender, chat string, attachment map[string]interface{}) {
 	payload := WebhookPayload{
-		Event:   event,
-		Message: message,
-		Sender:  sender,
-		Chat:    chat,
-		Time:    time.Now(),
+		Event:      event,
+		Message:    message,
+		Sender:     sender,
+		Chat:       chat,
+		Time:       time.Now(),
+		Attachment: attachment,
 	}
 
 	jsonData, err := json.Marshal(payload)
