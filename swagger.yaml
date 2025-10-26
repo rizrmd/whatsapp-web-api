@@ -52,11 +52,15 @@ paths:
     post:
       tags:
         - Messaging
-      summary: Send message to WhatsApp number
+      summary: Send message with attachments to WhatsApp number
       description: |
-        Sends a text message to a WhatsApp number. The service must be paired with WhatsApp before using this endpoint.
+        Sends a text message and/or attachments to a WhatsApp number. The service must be paired with WhatsApp before using this endpoint.
 
         The phone number should include the country code without the '+' prefix (e.g., "1234567890" for +1 234-567-890).
+
+        **Special behavior**: When sending a text message with a single image attachment, the text will be used as the image caption and sent as one combined message.
+
+        **Attachment requirements**: All attachments must be publicly accessible HTTP/HTTPS URLs. Base64 data is not supported.
       operationId: sendMessage
       requestBody:
         required: true
@@ -64,22 +68,61 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/SendMessageRequest'
-            example:
-              number: "1234567890"
-              message: "Hello from WhatsApp API!"
+            examples:
+              textOnly:
+                summary: Text message only
+                value:
+                  number: "1234567890"
+                  message: "Hello from WhatsApp API!"
+              imageOnly:
+                summary: Image only
+                value:
+                  number: "1234567890"
+                  attachments:
+                    - type: "image"
+                      url: "https://example.com/image.jpg"
+                      caption: "Check out this image"
+              textWithImage:
+                summary: Text with image (will be combined)
+                value:
+                  number: "1234567890"
+                  message: "This is the image caption"
+                  attachments:
+                    - type: "image"
+                      url: "https://example.com/image.jpg"
+              multipleAttachments:
+                summary: Multiple attachments
+                value:
+                  number: "1234567890"
+                  message: "Here are the files"
+                  attachments:
+                    - type: "image"
+                      url: "https://example.com/image.jpg"
+                      caption: "First image"
+                    - type: "document"
+                      url: "https://example.com/document.pdf"
+                      filename: "report.pdf"
       responses:
         '200':
-          description: Message sent successfully
+          description: Message(s) sent successfully
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SendMessageResponse'
-              example:
-                success: true
-                message: "Message sent successfully"
-                data:
-                  number: "1234567890"
-                  message: "Hello from WhatsApp API!"
+              examples:
+                success:
+                  summary: Successful send
+                  value:
+                    success: true
+                    message: "Successfully sent 1 message(s)"
+                    data:
+                      number: "1234567890"
+                      message: "Hello from WhatsApp API!"
+                      attachments: []
+                      sent:
+                        - index: 1
+                          type: "text"
+                          content: "Hello from WhatsApp API!"
         '400':
           $ref: '#/components/responses/BadRequest'
         '405':
@@ -150,7 +193,6 @@ components:
       type: object
       required:
         - number
-        - message
       properties:
         number:
           type: string
@@ -159,16 +201,21 @@ components:
           pattern: '^[0-9]{10,15}$'
         message:
           type: string
-          description: Message content to send
+          description: Message content to send. Optional if attachments are provided
           example: "Hello from WhatsApp API!"
           maxLength: 4096
+        attachments:
+          type: array
+          description: List of attachments to send. Optional if message is provided
+          items:
+            $ref: '#/components/schemas/Attachment'
 
     SendMessageResponse:
       type: object
       properties:
         success:
           type: boolean
-          description: Whether the message was sent successfully
+          description: Whether the message(s) were sent successfully
         message:
           type: string
           description: Response message
@@ -181,7 +228,54 @@ components:
               description: The phone number the message was sent to
             message:
               type: string
-              description: The message content that was sent
+              description: The original message content that was sent
+            attachments:
+              type: array
+              description: The original attachments that were sent
+              items:
+                $ref: '#/components/schemas/Attachment'
+            sent:
+              type: array
+              description: Details of each message that was actually sent
+              items:
+                type: object
+                properties:
+                  index:
+                    type: integer
+                    description: Message index (1-based)
+                  type:
+                    type: string
+                    description: Type of message sent (text, image, document, audio, video, image_with_caption)
+                  content:
+                    type: string
+                    description: Message content or caption
+                  filename:
+                    type: string
+                    description: Filename for document attachments
+
+    Attachment:
+      type: object
+      required:
+        - type
+        - url
+      properties:
+        type:
+          type: string
+          description: Type of attachment
+          enum: ["image", "document", "audio", "video"]
+          example: "image"
+        url:
+          type: string
+          description: Publicly accessible HTTP/HTTPS URL to the file
+          example: "https://example.com/image.jpg"
+        filename:
+          type: string
+          description: Optional filename for document attachments
+          example: "document.pdf"
+        caption:
+          type: string
+          description: Optional caption for image/video attachments
+          example: "Check out this image"
 
     HealthResponse:
       type: object
@@ -195,6 +289,10 @@ components:
         data:
           type: object
           properties:
+            version:
+              type: string
+              description: API version
+              example: "v1.3.0"
             paired:
               type: boolean
               description: Whether WhatsApp is paired
@@ -225,9 +323,22 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
-          example:
-            success: false
-            message: "Number and message are required"
+          examples:
+            missingNumber:
+              summary: Missing number
+              value:
+                success: false
+                message: "Number is required"
+            missingContent:
+              summary: Missing message and attachments
+              value:
+                success: false
+                message: "Either message or attachments are required"
+            invalidNumber:
+              summary: Invalid phone number
+              value:
+                success: false
+                message: "Invalid phone number: invalid JID format"
 
     MethodNotAllowed:
       description: Method not allowed - use POST for this endpoint
