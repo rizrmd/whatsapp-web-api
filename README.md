@@ -191,12 +191,12 @@ Send a text message and/or attachments to a WhatsApp number.
   "attachments": [
     {
       "type": "image",
-      "url": "https://example.com/image.jpg",
+        "url": "https://picsum.photos/800/600",
       "caption": "Check out this image!"
     },
     {
       "type": "document",
-      "url": "data:application/pdf;base64,JVBERi0xLjQK...",
+      "url": "https://example.com/document.pdf",
       "filename": "document.pdf"
     }
   ]
@@ -208,7 +208,7 @@ Send a text message and/or attachments to a WhatsApp number.
 - `message` (string, optional): Message text (max 4096 characters)
 - `attachments` (array, optional): Array of attachment objects
   - `type` (string, required): Attachment type - "image", "document", "audio", "video"
-  - `url` (string, required): URL or base64 data of the attachment
+  - `url` (string, required): **Publicly accessible HTTP/HTTPS URL** for the attachment (not base64 data)
   - `filename` (string, optional): Filename for documents
   - `caption` (string, optional): Caption for images/videos
 
@@ -302,7 +302,7 @@ Access API documentation and OpenAPI specification.
         "message":"Hello from binary!",
         "attachments":[{
           "type":"image",
-          "url":"https://example.com/image.jpg",
+           "url":"https://picsum.photos/800/600",
           "caption":"Check this out"
         }]
       }'
@@ -401,7 +401,7 @@ curl -X POST http://localhost:8080/send \
     "attachments": [
       {
         "type": "image",
-        "url": "https://example.com/image.jpg",
+      "url": "https://picsum.photos/800/600",
         "caption": "Check this out"
       }
     ]
@@ -444,7 +444,7 @@ sendMessage('1234567890', 'Hello from Node.js!');
 sendMessage('1234567890', 'Check this image!', [
   {
     type: 'image',
-    url: 'https://example.com/image.jpg',
+    url: 'https://picsum.photos/800/600',
     caption: 'Amazing photo'
   }
 ]);
@@ -617,6 +617,8 @@ psql $DATABASE_URL
 - ✅ Check phone number format: `1234567890` (no '+')
 - ✅ Ensure message length < 4096 characters
 - ✅ Check webhook status if messages aren't being received
+- ✅ **Important**: Attachment URLs must be publicly accessible HTTP/HTTPS links (not base64 data)
+- ✅ Test attachment URLs in browser to ensure they're accessible
 
 ### Server Issues
 ```bash

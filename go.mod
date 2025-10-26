@@ -1,4 +1,4 @@
-module whatsapp-echo-bot
+module whatsapp-web-api
 
 go 1.24.3
 

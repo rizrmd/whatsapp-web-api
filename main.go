@@ -3,18 +3,15 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"image/png"
 	"io"
 	"log"
-	"mime"
 	"net/http"
 	"net/url"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -37,7 +34,8 @@ var (
 	client     *whatsmeow.Client
 	qrChannel  chan string
 	webhookURL string
-	isPaired   bool = false
+	isPaired   bool   = false
+	version    string = "v1.2.0"
 )
 
 // Response structures for API
@@ -143,14 +141,6 @@ func initializeWhatsApp() {
 
 // /pair endpoint - generate QR code for pairing
 func pairHandler(w http.ResponseWriter, r *http.Request) {
-	// Check if user wants image response (via Accept header or query parameter)
-	acceptHeader := r.Header.Get("Accept")
-	queryFormat := r.URL.Query().Get("format")
-
-	wantsImage := (acceptHeader == "image/png") ||
-		(acceptHeader != "" && acceptHeader != "application/json" && acceptHeader != "*/*") ||
-		(queryFormat == "image")
-
 	// If already paired or connected, disconnect and clear session first
 	if client.IsConnected() {
 		client.Disconnect()
@@ -172,31 +162,14 @@ func pairHandler(w http.ResponseWriter, r *http.Request) {
 	// Get QR channel (must be called before connecting)
 	qrChan, err := client.GetQRChannel(context.Background())
 	if err != nil {
-		if wantsImage {
-			http.Error(w, fmt.Sprintf("Failed to get QR channel: %v", err), http.StatusInternalServerError)
-		} else {
-			response := APIResponse{
-				Success: false,
-				Message: fmt.Sprintf("Failed to get QR channel: %v", err),
-			}
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(response)
-		}
+		http.Error(w, fmt.Sprintf("Failed to get QR channel: %v", err), http.StatusInternalServerError)
 		return
 	}
 
 	// Connect client after getting QR channel
 	err = client.Connect()
 	if err != nil {
-		if wantsImage {
-			http.Error(w, fmt.Sprintf("Failed to connect: %v", err), http.StatusInternalServerError)
-		} else {
-			response := APIResponse{
-				Success: false,
-				Message: fmt.Sprintf("Failed to connect: %v", err),
-			}
-			json.NewEncoder(w).Encode(response)
-		}
+		http.Error(w, fmt.Sprintf("Failed to connect: %v", err), http.StatusInternalServerError)
 		return
 	}
 
@@ -206,74 +179,37 @@ func pairHandler(w http.ResponseWriter, r *http.Request) {
 		if evt.Event == "code" {
 			qrCode := evt.Code
 
-			if wantsImage {
-				// Generate QR code as PNG image
-				qr, err := qrcode.New(qrCode, qrcode.Medium)
-				if err != nil {
-					http.Error(w, fmt.Sprintf("Failed to generate QR code: %v", err), http.StatusInternalServerError)
-					return
-				}
-
-				// Set content type for PNG image
-				w.Header().Set("Content-Type", "image/png")
-				w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
-				w.Header().Set("Pragma", "no-cache")
-				w.Header().Set("Expires", "0")
-
-				// Encode and send the image
-				err = png.Encode(w, qr.Image(256))
-				if err != nil {
-					http.Error(w, fmt.Sprintf("Failed to encode QR image: %v", err), http.StatusInternalServerError)
-					return
-				}
-
-				log.Println("QR code image generated successfully")
-				return
-			} else {
-				// Return JSON response with QR code info
-				qrImageURL := fmt.Sprintf("https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=%s", qrCode)
-
-				response := APIResponse{
-					Success: true,
-					Message: "QR code generated successfully",
-					Data: map[string]interface{}{
-						"qr_code":        qrCode,
-						"qr_image_url":   qrImageURL,
-						"image_endpoint": "/pair?format=image",
-						"expires_in":     evt.Timeout,
-					},
-				}
-				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(response)
-
-				// Handle QR events in background
-				go handleQREvents(qrChan)
+			// Generate QR code as PNG image
+			qr, err := qrcode.New(qrCode, qrcode.Medium)
+			if err != nil {
+				http.Error(w, fmt.Sprintf("Failed to generate QR code: %v", err), http.StatusInternalServerError)
 				return
 			}
+
+			// Set content type for PNG image
+			w.Header().Set("Content-Type", "image/png")
+			w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+			w.Header().Set("Pragma", "no-cache")
+			w.Header().Set("Expires", "0")
+
+			// Encode and send the image
+			err = png.Encode(w, qr.Image(256))
+			if err != nil {
+				http.Error(w, fmt.Sprintf("Failed to encode QR image: %v", err), http.StatusInternalServerError)
+				return
+			}
+
+			log.Println("QR code image generated successfully")
+
+			// Handle QR events in background
+			go handleQREvents(qrChan)
+			return
 		} else {
-			if wantsImage {
-				http.Error(w, fmt.Sprintf("QR generation error: %s", evt.Event), http.StatusInternalServerError)
-			} else {
-				response := APIResponse{
-					Success: false,
-					Message: fmt.Sprintf("QR generation error: %s", evt.Event),
-				}
-				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(response)
-			}
+			http.Error(w, fmt.Sprintf("QR generation error: %s", evt.Event), http.StatusInternalServerError)
 			return
 		}
 	case <-time.After(10 * time.Second):
-		if wantsImage {
-			http.Error(w, "QR code generation timeout", http.StatusRequestTimeout)
-		} else {
-			response := APIResponse{
-				Success: false,
-				Message: "QR code generation timeout",
-			}
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(response)
-		}
+		http.Error(w, "QR code generation timeout", http.StatusRequestTimeout)
 		return
 	}
 }
@@ -366,15 +302,11 @@ func sendHandler(w http.ResponseWriter, r *http.Request) {
 
 	var messages []*waProto.Message
 
-	// Add text message if provided
-	if req.Message != "" {
-		messages = append(messages, &waProto.Message{
-			Conversation: proto.String(req.Message),
-		})
-	}
-
-	// Process attachments
-	for _, attachment := range req.Attachments {
+	// Check if we have text + single image attachment to combine
+	if req.Message != "" && len(req.Attachments) == 1 && req.Attachments[0].Type == "image" {
+		// Combine text as image caption
+		attachment := req.Attachments[0]
+		attachment.Caption = req.Message // Use text message as caption
 		attachmentMsg, err := prepareAttachmentMessage(attachment)
 		if err != nil {
 			response := APIResponse{
@@ -385,6 +317,27 @@ func sendHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		messages = append(messages, attachmentMsg)
+	} else {
+		// Add text message if provided
+		if req.Message != "" {
+			messages = append(messages, &waProto.Message{
+				Conversation: proto.String(req.Message),
+			})
+		}
+
+		// Process attachments
+		for _, attachment := range req.Attachments {
+			attachmentMsg, err := prepareAttachmentMessage(attachment)
+			if err != nil {
+				response := APIResponse{
+					Success: false,
+					Message: fmt.Sprintf("Failed to prepare attachment: %v", err),
+				}
+				json.NewEncoder(w).Encode(response)
+				return
+			}
+			messages = append(messages, attachmentMsg)
+		}
 	}
 
 	// Send all messages
@@ -401,7 +354,12 @@ func sendHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		sentInfo := map[string]interface{}{"index": i + 1}
-		if i == 0 && req.Message != "" {
+		if req.Message != "" && len(req.Attachments) == 1 && req.Attachments[0].Type == "image" {
+			// Combined message case
+			sentInfo["type"] = "image_with_caption"
+			sentInfo["content"] = req.Message
+			sentInfo["filename"] = req.Attachments[0].Filename
+		} else if i == 0 && req.Message != "" {
 			sentInfo["type"] = "text"
 			sentInfo["content"] = req.Message
 		} else if i > 0 || req.Message == "" {
@@ -435,6 +393,7 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
 	status := map[string]interface{}{
+		"version":            version,
 		"paired":             isPaired,
 		"connected":          client != nil && client.IsConnected(),
 		"webhook_configured": webhookURL != "",
@@ -560,15 +519,11 @@ func downloadFile(url string) ([]byte, string, error) {
 	return data, contentType, nil
 }
 
-func decodeBase64Data(data string) ([]byte, error) {
-	if strings.HasPrefix(data, "data:") {
-		parts := strings.SplitN(data, ",", 2)
-		if len(parts) != 2 {
-			return nil, fmt.Errorf("invalid data URL format")
-		}
-		data = parts[1]
+func min(a, b int) int {
+	if a < b {
+		return a
 	}
-	return base64.StdEncoding.DecodeString(data)
+	return b
 }
 
 func prepareAttachmentMessage(attachment Attachment) (*waProto.Message, error) {
@@ -579,13 +534,7 @@ func prepareAttachmentMessage(attachment Attachment) (*waProto.Message, error) {
 	if strings.HasPrefix(attachment.URL, "http") {
 		data, contentType, err = downloadFile(attachment.URL)
 	} else {
-		data, err = decodeBase64Data(attachment.URL)
-		if err == nil {
-			contentType = mime.TypeByExtension(filepath.Ext(attachment.Filename))
-			if contentType == "" {
-				contentType = "application/octet-stream"
-			}
-		}
+		return nil, fmt.Errorf("attachment URL must be a publicly accessible HTTP/HTTPS link, not base64 data. Found: %s", attachment.URL[:min(50, len(attachment.URL))])
 	}
 
 	if err != nil {
@@ -614,7 +563,8 @@ func prepareAttachmentMessage(attachment Attachment) (*waProto.Message, error) {
 	case "image":
 		return &waProto.Message{
 			ImageMessage: &waProto.ImageMessage{
-				URL:           proto.String(uploaded.URL),
+				URL:           &uploaded.URL,
+				DirectPath:    &uploaded.DirectPath,
 				Mimetype:      proto.String(contentType),
 				Caption:       proto.String(attachment.Caption),
 				FileLength:    proto.Uint64(uint64(len(data))),
@@ -630,7 +580,8 @@ func prepareAttachmentMessage(attachment Attachment) (*waProto.Message, error) {
 		}
 		return &waProto.Message{
 			DocumentMessage: &waProto.DocumentMessage{
-				URL:           proto.String(uploaded.URL),
+				URL:           &uploaded.URL,
+				DirectPath:    &uploaded.DirectPath,
 				Mimetype:      proto.String(contentType),
 				Title:         proto.String(filename),
 				FileName:      proto.String(filename),
@@ -643,7 +594,8 @@ func prepareAttachmentMessage(attachment Attachment) (*waProto.Message, error) {
 	case "audio":
 		return &waProto.Message{
 			AudioMessage: &waProto.AudioMessage{
-				URL:           proto.String(uploaded.URL),
+				URL:           &uploaded.URL,
+				DirectPath:    &uploaded.DirectPath,
 				Mimetype:      proto.String(contentType),
 				FileLength:    proto.Uint64(uint64(len(data))),
 				MediaKey:      uploaded.MediaKey,
@@ -654,7 +606,8 @@ func prepareAttachmentMessage(attachment Attachment) (*waProto.Message, error) {
 	case "video":
 		return &waProto.Message{
 			VideoMessage: &waProto.VideoMessage{
-				URL:           proto.String(uploaded.URL),
+				URL:           &uploaded.URL,
+				DirectPath:    &uploaded.DirectPath,
 				Mimetype:      proto.String(contentType),
 				Caption:       proto.String(attachment.Caption),
 				FileLength:    proto.Uint64(uint64(len(data))),
