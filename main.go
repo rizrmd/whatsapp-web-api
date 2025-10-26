@@ -3,14 +3,19 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"image/png"
+	"io"
 	"log"
+	"mime"
 	"net/http"
 	"net/url"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -42,9 +47,17 @@ type APIResponse struct {
 	Data    interface{} `json:"data,omitempty"`
 }
 
+type Attachment struct {
+	Type     string `json:"type"`     // image, document, audio, video
+	URL      string `json:"url"`      // URL or base64 data
+	Filename string `json:"filename"` // optional filename for documents
+	Caption  string `json:"caption"`  // optional caption
+}
+
 type SendRequest struct {
-	Number  string `json:"number"`
-	Message string `json:"message"`
+	Number      string       `json:"number"`
+	Message     string       `json:"message"`
+	Attachments []Attachment `json:"attachments,omitempty"`
 }
 
 type WebhookPayload struct {
@@ -320,10 +333,20 @@ func sendHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate input
-	if req.Number == "" || req.Message == "" {
+	if req.Number == "" {
 		response := APIResponse{
 			Success: false,
-			Message: "Number and message are required",
+			Message: "Number is required",
+		}
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	if req.Message == "" && len(req.Attachments) == 0 {
+		response := APIResponse{
+			Success: false,
+			Message: "Either message or attachments are required",
 		}
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(response)
@@ -341,28 +364,67 @@ func sendHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Build message
-	msg := &waProto.Message{
-		Conversation: proto.String(req.Message),
+	var messages []*waProto.Message
+
+	// Add text message if provided
+	if req.Message != "" {
+		messages = append(messages, &waProto.Message{
+			Conversation: proto.String(req.Message),
+		})
 	}
 
-	// Send message
-	_, err = client.SendMessage(context.Background(), targetJID, msg)
-	if err != nil {
-		response := APIResponse{
-			Success: false,
-			Message: fmt.Sprintf("Failed to send message: %v", err),
+	// Process attachments
+	for _, attachment := range req.Attachments {
+		attachmentMsg, err := prepareAttachmentMessage(attachment)
+		if err != nil {
+			response := APIResponse{
+				Success: false,
+				Message: fmt.Sprintf("Failed to prepare attachment: %v", err),
+			}
+			json.NewEncoder(w).Encode(response)
+			return
 		}
-		json.NewEncoder(w).Encode(response)
-		return
+		messages = append(messages, attachmentMsg)
+	}
+
+	// Send all messages
+	var sentMessages []map[string]interface{}
+	for i, msg := range messages {
+		_, err = client.SendMessage(context.Background(), targetJID, msg)
+		if err != nil {
+			response := APIResponse{
+				Success: false,
+				Message: fmt.Sprintf("Failed to send message %d: %v", i+1, err),
+			}
+			json.NewEncoder(w).Encode(response)
+			return
+		}
+
+		sentInfo := map[string]interface{}{"index": i + 1}
+		if i == 0 && req.Message != "" {
+			sentInfo["type"] = "text"
+			sentInfo["content"] = req.Message
+		} else if i > 0 || req.Message == "" {
+			attachmentIndex := i
+			if req.Message != "" {
+				attachmentIndex = i - 1
+			}
+			if attachmentIndex < len(req.Attachments) {
+				sentInfo["type"] = req.Attachments[attachmentIndex].Type
+				sentInfo["filename"] = req.Attachments[attachmentIndex].Filename
+			}
+		}
+		sentMessages = append(sentMessages, sentInfo)
 	}
 
 	response := APIResponse{
 		Success: true,
-		Message: "Message sent successfully",
-		Data: map[string]string{
-			"number":  req.Number,
-			"message": req.Message,
+		Message: fmt.Sprintf("Successfully sent %d message(s)", len(messages)),
+		Data: map[string]interface{}{
+			"number":      req.Number,
+			"message":     req.Message,
+			"attachments": req.Attachments,
+			"sent":        sentMessages,
 		},
 	}
 	json.NewEncoder(w).Encode(response)
@@ -396,7 +458,7 @@ func swaggerHandler(w http.ResponseWriter, r *http.Request) {
 		"version":     "1.0.0",
 		"endpoints": map[string]string{
 			"pair":    "GET  /pair   - Generate QR code for pairing",
-			"send":    "POST /send   - Send message (requires pairing)",
+			"send":    "POST /send   - Send message with attachments (requires pairing)",
 			"health":  "GET  /health - Check service status",
 			"swagger": "GET  /swagger - API documentation info",
 			"docs":    "GET  /swagger.yaml - Full OpenAPI specification",
@@ -474,6 +536,138 @@ func handleMessage(evt *events.Message) {
 	log.Printf("Message content: %s\n", messageContent)
 }
 
+func downloadFile(url string) ([]byte, string, error) {
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, "", fmt.Errorf("HTTP error: %d", resp.StatusCode)
+	}
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, "", err
+	}
+
+	contentType := resp.Header.Get("Content-Type")
+	if contentType == "" {
+		contentType = http.DetectContentType(data)
+	}
+
+	return data, contentType, nil
+}
+
+func decodeBase64Data(data string) ([]byte, error) {
+	if strings.HasPrefix(data, "data:") {
+		parts := strings.SplitN(data, ",", 2)
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("invalid data URL format")
+		}
+		data = parts[1]
+	}
+	return base64.StdEncoding.DecodeString(data)
+}
+
+func prepareAttachmentMessage(attachment Attachment) (*waProto.Message, error) {
+	var data []byte
+	var contentType string
+	var err error
+
+	if strings.HasPrefix(attachment.URL, "http") {
+		data, contentType, err = downloadFile(attachment.URL)
+	} else {
+		data, err = decodeBase64Data(attachment.URL)
+		if err == nil {
+			contentType = mime.TypeByExtension(filepath.Ext(attachment.Filename))
+			if contentType == "" {
+				contentType = "application/octet-stream"
+			}
+		}
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to load attachment: %v", err)
+	}
+
+	var mediaType whatsmeow.MediaType
+	switch attachment.Type {
+	case "image":
+		mediaType = whatsmeow.MediaImage
+	case "document":
+		mediaType = whatsmeow.MediaDocument
+	case "audio":
+		mediaType = whatsmeow.MediaAudio
+	case "video":
+		mediaType = whatsmeow.MediaVideo
+	default:
+		mediaType = whatsmeow.MediaDocument
+	}
+	uploaded, err := client.Upload(context.Background(), data, mediaType)
+	if err != nil {
+		return nil, fmt.Errorf("failed to upload attachment: %v", err)
+	}
+
+	switch attachment.Type {
+	case "image":
+		return &waProto.Message{
+			ImageMessage: &waProto.ImageMessage{
+				URL:           proto.String(uploaded.URL),
+				Mimetype:      proto.String(contentType),
+				Caption:       proto.String(attachment.Caption),
+				FileLength:    proto.Uint64(uint64(len(data))),
+				MediaKey:      uploaded.MediaKey,
+				FileEncSHA256: uploaded.FileEncSHA256,
+				FileSHA256:    uploaded.FileSHA256,
+			},
+		}, nil
+	case "document":
+		filename := attachment.Filename
+		if filename == "" {
+			filename = "document"
+		}
+		return &waProto.Message{
+			DocumentMessage: &waProto.DocumentMessage{
+				URL:           proto.String(uploaded.URL),
+				Mimetype:      proto.String(contentType),
+				Title:         proto.String(filename),
+				FileName:      proto.String(filename),
+				FileLength:    proto.Uint64(uint64(len(data))),
+				MediaKey:      uploaded.MediaKey,
+				FileEncSHA256: uploaded.FileEncSHA256,
+				FileSHA256:    uploaded.FileSHA256,
+			},
+		}, nil
+	case "audio":
+		return &waProto.Message{
+			AudioMessage: &waProto.AudioMessage{
+				URL:           proto.String(uploaded.URL),
+				Mimetype:      proto.String(contentType),
+				FileLength:    proto.Uint64(uint64(len(data))),
+				MediaKey:      uploaded.MediaKey,
+				FileEncSHA256: uploaded.FileEncSHA256,
+				FileSHA256:    uploaded.FileSHA256,
+			},
+		}, nil
+	case "video":
+		return &waProto.Message{
+			VideoMessage: &waProto.VideoMessage{
+				URL:           proto.String(uploaded.URL),
+				Mimetype:      proto.String(contentType),
+				Caption:       proto.String(attachment.Caption),
+				FileLength:    proto.Uint64(uint64(len(data))),
+				MediaKey:      uploaded.MediaKey,
+				FileEncSHA256: uploaded.FileEncSHA256,
+				FileSHA256:    uploaded.FileSHA256,
+			},
+		}, nil
+	default:
+		return nil, fmt.Errorf("unsupported attachment type: %s", attachment.Type)
+	}
+}
+
 func sendToWebhook(event, message, sender, chat string) {
 	payload := WebhookPayload{
 		Event:   event,
@@ -528,7 +722,7 @@ func main() {
 	log.Printf("Starting WhatsApp Web API server on port %s", port)
 	log.Printf("Available endpoints:")
 	log.Printf("  GET  /pair      - Generate QR code for pairing")
-	log.Printf("  POST /send      - Send message (requires pairing)")
+	log.Printf("  POST /send      - Send message with attachments (requires pairing)")
 	log.Printf("  GET  /health    - Check service status")
 	log.Printf("  GET  /swagger   - API documentation info")
 	log.Printf("  GET  /swagger.yaml - Full OpenAPI specification")

@@ -5,7 +5,7 @@
 ## ✨ Features
 
 - **📱 QR Code Pairing**: Generate QR codes to pair WhatsApp accounts
-- **💬 Message Sending**: Send text messages to any WhatsApp number via REST API
+- **💬 Message Sending**: Send text messages and attachments (images, documents, audio, video) to any WhatsApp number via REST API
 - **🪝 Webhook Support**: Receive incoming messages via HTTP webhooks
 - **🗄️ PostgreSQL Storage**: Secure WhatsApp session persistence in PostgreSQL
 - **🔒 Auto SSL Handling**: Automatically configures PostgreSQL SSL mode
@@ -181,28 +181,51 @@ POST /send
 Content-Type: application/json
 ```
 
-Send a text message to a WhatsApp number.
+Send a text message and/or attachments to a WhatsApp number.
 
 **Request Body**:
 ```json
 {
   "number": "1234567890",
-  "message": "Hello from WhatsApp API!"
+  "message": "Hello from WhatsApp API!",
+  "attachments": [
+    {
+      "type": "image",
+      "url": "https://example.com/image.jpg",
+      "caption": "Check out this image!"
+    },
+    {
+      "type": "document",
+      "url": "data:application/pdf;base64,JVBERi0xLjQK...",
+      "filename": "document.pdf"
+    }
+  ]
 }
 ```
 
 **Parameters**:
 - `number` (string, required): Phone number with country code (no '+' prefix)
-- `message` (string, required): Message text (max 4096 characters)
+- `message` (string, optional): Message text (max 4096 characters)
+- `attachments` (array, optional): Array of attachment objects
+  - `type` (string, required): Attachment type - "image", "document", "audio", "video"
+  - `url` (string, required): URL or base64 data of the attachment
+  - `filename` (string, optional): Filename for documents
+  - `caption` (string, optional): Caption for images/videos
 
 **Response**:
 ```json
 {
   "success": true,
-  "message": "Message sent successfully",
+  "message": "Successfully sent 3 message(s)",
   "data": {
     "number": "1234567890",
-    "message": "Hello from WhatsApp API!"
+    "message": "Hello from WhatsApp API!",
+    "attachments": [...],
+    "sent": [
+      {"index": 1, "type": "text", "content": "Hello from WhatsApp API!"},
+      {"index": 2, "type": "image", "filename": ""},
+      {"index": 3, "type": "document", "filename": "document.pdf"}
+    ]
   }
 }
 ```
@@ -270,12 +293,20 @@ Access API documentation and OpenAPI specification.
    ```
 
 6. **Start sending messages**:
-   ```bash
-   # Send a message
-   curl -X POST http://localhost:8080/send \
-     -H "Content-Type: application/json" \
-     -d '{"number":"1234567890","message":"Hello from binary!"}'
-   ```
+    ```bash
+    # Send a message with attachment
+    curl -X POST http://localhost:8080/send \
+      -H "Content-Type: application/json" \
+      -d '{
+        "number":"1234567890",
+        "message":"Hello from binary!",
+        "attachments":[{
+          "type":"image",
+          "url":"https://example.com/image.jpg",
+          "caption":"Check this out"
+        }]
+      }'
+    ```
 
 ### **Production Deployment with Binary**
 
@@ -360,7 +391,24 @@ curl http://localhost:8080/health
 curl http://localhost:8080/pair
 ```
 
-**Send message**:
+**Send message with attachments**:
+```bash
+curl -X POST http://localhost:8080/send \
+  -H "Content-Type: application/json" \
+  -d '{
+    "number": "1234567890",
+    "message": "Hello from API!",
+    "attachments": [
+      {
+        "type": "image",
+        "url": "https://example.com/image.jpg",
+        "caption": "Check this out"
+      }
+    ]
+  }'
+```
+
+**Send text-only message**:
 ```bash
 curl -X POST http://localhost:8080/send \
   -H "Content-Type: application/json" \
@@ -375,12 +423,13 @@ curl -X POST http://localhost:8080/send \
 ```javascript
 const axios = require('axios');
 
-// Send message
-async function sendMessage(number, message) {
+// Send message with attachments
+async function sendMessage(number, message, attachments = []) {
   try {
     const response = await axios.post('http://localhost:8080/send', {
       number: number,
-      message: message
+      message: message,
+      attachments: attachments
     });
     console.log('Message sent:', response.data);
   } catch (error) {
@@ -388,8 +437,17 @@ async function sendMessage(number, message) {
   }
 }
 
-// Usage
+// Usage examples
 sendMessage('1234567890', 'Hello from Node.js!');
+
+// Send with image attachment
+sendMessage('1234567890', 'Check this image!', [
+  {
+    type: 'image',
+    url: 'https://example.com/image.jpg',
+    caption: 'Amazing photo'
+  }
+]);
 ```
 
 ### Python Example
@@ -398,18 +456,31 @@ sendMessage('1234567890', 'Hello from Node.js!');
 import requests
 import json
 
-def send_whatsapp_message(number, message):
+def send_whatsapp_message(number, message, attachments=None):
     url = "http://localhost:8080/send"
     payload = {
         "number": number,
         "message": message
     }
+    
+    if attachments:
+        payload["attachments"] = attachments
 
     response = requests.post(url, json=payload)
     return response.json()
 
-# Usage
+# Usage examples
 result = send_whatsapp_message("1234567890", "Hello from Python!")
+print(result)
+
+# Send with document attachment
+result = send_whatsapp_message("1234567890", "Here's the document", [
+    {
+        "type": "document",
+        "url": "https://example.com/document.pdf",
+        "filename": "report.pdf"
+    }
+])
 print(result)
 ```
 
