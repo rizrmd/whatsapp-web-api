@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -414,6 +415,55 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
+// Image endpoint - serve downloaded images
+func imageHandler(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	filename := vars["filename"]
+
+	if filename == "" {
+		http.Error(w, "Filename is required", http.StatusBadRequest)
+		return
+	}
+
+	// Security check: ensure filename doesn't contain path traversal
+	if strings.Contains(filename, "..") || strings.Contains(filename, "/") || strings.Contains(filename, "\\") {
+		http.Error(w, "Invalid filename", http.StatusBadRequest)
+		return
+	}
+
+	// Construct file path
+	filePath := fmt.Sprintf("downloads/%s", filename)
+
+	// Check if file exists
+	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+		http.Error(w, "Image not found", http.StatusNotFound)
+		return
+	}
+
+	// Determine content type
+	ext := strings.ToLower(filepath.Ext(filename))
+	var contentType string
+	switch ext {
+	case ".jpg", ".jpeg":
+		contentType = "image/jpeg"
+	case ".png":
+		contentType = "image/png"
+	case ".gif":
+		contentType = "image/gif"
+	case ".webp":
+		contentType = "image/webp"
+	default:
+		contentType = "application/octet-stream"
+	}
+
+	// Set headers
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Cache-Control", "public, max-age=3600") // Cache for 1 hour
+
+	// Serve file
+	http.ServeFile(w, r, filePath)
+}
+
 // Swagger documentation endpoint
 func swaggerHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
@@ -426,6 +476,7 @@ func swaggerHandler(w http.ResponseWriter, r *http.Request) {
 			"pair":    "GET  /pair   - Generate QR code for pairing",
 			"send":    "POST /send   - Send message with attachments (requires pairing)",
 			"health":  "GET  /health - Check service status",
+			"images":  "GET  /images/{filename} - Serve downloaded images",
 			"swagger": "GET  /swagger - API documentation info",
 			"docs":    "GET  /swagger.yaml - Full OpenAPI specification",
 		},
@@ -459,11 +510,77 @@ func handler(rawEvt interface{}) {
 	}
 }
 
+func logMessageDetails(evt *events.Message) {
+	// Log basic message information
+	log.Printf("=== MESSAGE RECEIVED ===")
+	log.Printf("Message ID: %s", evt.Info.ID)
+	log.Printf("From: %s", evt.Info.Sender.String())
+	log.Printf("Chat: %s", evt.Info.Chat.String())
+	log.Printf("Timestamp: %s", evt.Info.Timestamp)
+	log.Printf("Push Name: %s", evt.Info.PushName)
+	log.Printf("Is From Me: %t", evt.Info.IsFromMe)
+	log.Printf("Is Group: %t", evt.Info.Chat.Server == "g.us")
+
+	// Log message type information
+	if evt.Message != nil {
+		log.Printf("Message Type Analysis:")
+		if evt.Message.Conversation != nil && *evt.Message.Conversation != "" {
+			log.Printf("  - Text message: %s", *evt.Message.Conversation)
+		}
+		if evt.Message.ExtendedTextMessage != nil {
+			log.Printf("  - Extended text message")
+		}
+		if evt.Message.ImageMessage != nil {
+			log.Printf("  - Image message")
+		}
+		if evt.Message.DocumentMessage != nil {
+			log.Printf("  - Document message")
+		}
+		if evt.Message.AudioMessage != nil {
+			log.Printf("  - Audio message")
+		}
+		if evt.Message.VideoMessage != nil {
+			log.Printf("  - Video message")
+		}
+		if evt.Message.StickerMessage != nil {
+			log.Printf("  - Sticker message")
+		}
+		if evt.Message.ContactMessage != nil {
+			log.Printf("  - Contact message")
+		}
+		if evt.Message.LocationMessage != nil {
+			log.Printf("  - Location message")
+		}
+		if evt.Message.ReactionMessage != nil {
+			log.Printf("  - Reaction message")
+		}
+		if evt.Message.ButtonsResponseMessage != nil {
+			log.Printf("  - Button response message")
+		}
+		if evt.Message.ListResponseMessage != nil {
+			log.Printf("  - List response message")
+		}
+		if evt.Message.PollCreationMessage != nil {
+			log.Printf("  - Poll creation message")
+		}
+		if evt.Message.PollUpdateMessage != nil {
+			log.Printf("  - Poll update message")
+		}
+	} else {
+		log.Printf("  - Message content is nil")
+	}
+
+	log.Printf("========================")
+}
+
 func handleMessage(evt *events.Message) {
 	// Ignore messages from ourselves
 	if evt.Info.IsFromMe {
 		return
 	}
+
+	// Log comprehensive message information
+	logMessageDetails(evt)
 
 	// Mark message as read FIRST
 	err := client.MarkRead(
@@ -479,12 +596,9 @@ func handleMessage(evt *events.Message) {
 		log.Printf("Message marked as read successfully")
 	}
 
-	// Log message reception
-	log.Printf("Received message from %s (Chat: %s)\n", evt.Info.Sender.String(), evt.Info.Chat.String())
-
 	// Extract message content and handle automatic image download
 	var messageContent string
-	var imageInfo map[string]interface{}
+	var attachmentInfo map[string]interface{}
 
 	if evt.Message != nil {
 		if evt.Message.Conversation != nil && *evt.Message.Conversation != "" {
@@ -515,12 +629,15 @@ func handleMessage(evt *events.Message) {
 				}
 			}()
 
-			// Store image info for webhook
-			imageInfo = map[string]interface{}{
+			// Store image info for webhook and logging
+			attachmentInfo = map[string]interface{}{
 				"type":        "image",
 				"caption":     caption,
 				"mimetype":    imgMsg.Mimetype,
 				"file_length": imgMsg.FileLength,
+				"width":       imgMsg.Width,
+				"height":      imgMsg.Height,
+				"url":         fmt.Sprintf("/images/%s.jpg", evt.Info.ID),
 			}
 		} else if evt.Message.DocumentMessage != nil {
 			docMsg := evt.Message.DocumentMessage
@@ -529,8 +646,22 @@ func handleMessage(evt *events.Message) {
 				title = *docMsg.Title
 			}
 			messageContent = fmt.Sprintf("Document received: %s", title)
+			attachmentInfo = map[string]interface{}{
+				"type":        "document",
+				"title":       title,
+				"mimetype":    docMsg.Mimetype,
+				"file_length": docMsg.FileLength,
+				"page_count":  docMsg.PageCount,
+			}
 		} else if evt.Message.AudioMessage != nil {
+			audioMsg := evt.Message.AudioMessage
 			messageContent = "Audio message received"
+			attachmentInfo = map[string]interface{}{
+				"type":        "audio",
+				"mimetype":    audioMsg.Mimetype,
+				"file_length": audioMsg.FileLength,
+				"seconds":     audioMsg.Seconds,
+			}
 		} else if evt.Message.VideoMessage != nil {
 			vidMsg := evt.Message.VideoMessage
 			caption := ""
@@ -543,69 +674,150 @@ func handleMessage(evt *events.Message) {
 				}
 				return ""
 			}())
+			attachmentInfo = map[string]interface{}{
+				"type":        "video",
+				"caption":     caption,
+				"mimetype":    vidMsg.Mimetype,
+				"file_length": vidMsg.FileLength,
+				"seconds":     vidMsg.Seconds,
+				"width":       vidMsg.Width,
+				"height":      vidMsg.Height,
+			}
+		} else if evt.Message.StickerMessage != nil {
+			stickerMsg := evt.Message.StickerMessage
+			messageContent = "Sticker received"
+			attachmentInfo = map[string]interface{}{
+				"type":        "sticker",
+				"mimetype":    stickerMsg.Mimetype,
+				"file_length": stickerMsg.FileLength,
+				"width":       stickerMsg.Width,
+				"height":      stickerMsg.Height,
+			}
+		} else if evt.Message.ContactMessage != nil {
+			contactMsg := evt.Message.ContactMessage
+			messageContent = fmt.Sprintf("Contact received: %s", contactMsg.DisplayName)
+			attachmentInfo = map[string]interface{}{
+				"type":         "contact",
+				"display_name": contactMsg.DisplayName,
+				"vcard":        contactMsg.Vcard,
+			}
+		} else if evt.Message.LocationMessage != nil {
+			locMsg := evt.Message.LocationMessage
+			messageContent = fmt.Sprintf("Location received: %s", locMsg.Name)
+			attachmentInfo = map[string]interface{}{
+				"type":      "location",
+				"name":      locMsg.Name,
+				"address":   locMsg.Address,
+				"latitude":  locMsg.DegreesLatitude,
+				"longitude": locMsg.DegreesLongitude,
+			}
 		} else {
 			messageContent = "Non-text message received"
+			attachmentInfo = map[string]interface{}{
+				"type": "unknown",
+			}
 		}
+	}
+
+	// Log the processed message content and attachment details
+	log.Printf("Processed message - Content: %s", messageContent)
+	if attachmentInfo != nil {
+		log.Printf("Attachment details: %+v", attachmentInfo)
 	}
 
 	// Send to webhook if configured
 	if webhookURL != "" {
-		sendToWebhook("message", messageContent, evt.Info.Sender.String(), evt.Info.Chat.String(), imageInfo)
+		sendToWebhook("message", messageContent, evt.Info.Sender.String(), evt.Info.Chat.String(), attachmentInfo)
 	}
-
-	log.Printf("Message content: %s\n", messageContent)
 }
 
 func downloadAndSaveImage(messageID types.MessageID, imgMsg *waProto.ImageMessage) error {
+	log.Printf("=== IMAGE DOWNLOAD START ===")
+	log.Printf("Message ID: %s", messageID)
+	log.Printf("Image URL: %s", *imgMsg.URL)
+	log.Printf("Direct Path: %s", *imgMsg.DirectPath)
+	log.Printf("Mimetype: %s", *imgMsg.Mimetype)
+	log.Printf("File Length: %d bytes", *imgMsg.FileLength)
+	if imgMsg.Width != nil && imgMsg.Height != nil {
+		log.Printf("Dimensions: %dx%d", *imgMsg.Width, *imgMsg.Height)
+	}
+	if imgMsg.Caption != nil && *imgMsg.Caption != "" {
+		log.Printf("Caption: %s", *imgMsg.Caption)
+	}
+
 	if imgMsg.URL == nil || imgMsg.DirectPath == nil {
 		return fmt.Errorf("image URL or DirectPath is nil")
 	}
 
 	// Download the image using the client's built-in downloader
+	log.Printf("Starting download...")
 	data, err := client.Download(context.Background(), imgMsg)
 	if err != nil {
+		log.Printf("Download failed: %v", err)
 		return fmt.Errorf("failed to download image: %v", err)
 	}
 
-	log.Printf("Downloaded image data: %d bytes", len(data))
+	log.Printf("Successfully downloaded image data: %d bytes", len(data))
 
 	// Optionally save to file (you can customize this path)
 	filename := fmt.Sprintf("downloads/%s.jpg", messageID)
+	log.Printf("Creating downloads directory if needed...")
 	err = os.MkdirAll("downloads", 0755)
 	if err != nil {
+		log.Printf("Failed to create downloads directory: %v", err)
 		return fmt.Errorf("failed to create downloads directory: %v", err)
 	}
 
+	log.Printf("Saving image to: %s", filename)
 	err = os.WriteFile(filename, data, 0644)
 	if err != nil {
+		log.Printf("Failed to save image file: %v", err)
 		return fmt.Errorf("failed to save image file: %v", err)
 	}
 
-	log.Printf("Image saved to: %s", filename)
+	log.Printf("Image successfully saved to: %s", filename)
+	log.Printf("=== IMAGE DOWNLOAD COMPLETE ===")
 	return nil
 }
 
 func downloadFile(url string) ([]byte, string, error) {
+	log.Printf("=== FILE DOWNLOAD START ===")
+	log.Printf("Downloading from URL: %s", url)
+
 	resp, err := http.Get(url)
 	if err != nil {
+		log.Printf("HTTP GET request failed: %v", err)
 		return nil, "", err
 	}
 	defer resp.Body.Close()
 
+	log.Printf("HTTP Response Status: %d", resp.StatusCode)
+	log.Printf("Content-Type: %s", resp.Header.Get("Content-Type"))
+	log.Printf("Content-Length: %s", resp.Header.Get("Content-Length"))
+
 	if resp.StatusCode != http.StatusOK {
+		log.Printf("HTTP error: %d", resp.StatusCode)
 		return nil, "", fmt.Errorf("HTTP error: %d", resp.StatusCode)
 	}
 
+	log.Printf("Reading response body...")
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
+		log.Printf("Failed to read response body: %v", err)
 		return nil, "", err
 	}
+
+	log.Printf("Successfully downloaded %d bytes", len(data))
 
 	contentType := resp.Header.Get("Content-Type")
 	if contentType == "" {
 		contentType = http.DetectContentType(data)
+		log.Printf("Detected content type: %s", contentType)
+	} else {
+		log.Printf("Server content type: %s", contentType)
 	}
 
+	log.Printf("=== FILE DOWNLOAD COMPLETE ===")
 	return data, contentType, nil
 }
 
@@ -674,6 +886,13 @@ func min(a, b int) int {
 }
 
 func prepareAttachmentMessage(attachment Attachment, targetJID types.JID) (*waProto.Message, error) {
+	log.Printf("=== ATTACHMENT PREPARATION ===")
+	log.Printf("Attachment Type: %s", attachment.Type)
+	log.Printf("Attachment URL: %s", attachment.URL)
+	log.Printf("Attachment Caption: %s", attachment.Caption)
+	log.Printf("Attachment Filename: %s", attachment.Filename)
+	log.Printf("Target JID: %s", targetJID.String())
+
 	var data []byte
 	var contentType string
 	var err error
@@ -685,16 +904,22 @@ func prepareAttachmentMessage(attachment Attachment, targetJID types.JID) (*waPr
 	}
 
 	if err != nil {
+		log.Printf("Failed to load attachment: %v", err)
 		return nil, fmt.Errorf("failed to load attachment: %v", err)
 	}
 
+	log.Printf("Attachment loaded successfully: %d bytes, content type: %s", len(data), contentType)
+
 	// Convert image to JPEG if needed
 	if attachment.Type == "image" {
+		log.Printf("Converting image to JPEG...")
 		data, err = convertImageToJPEG(data, contentType)
 		if err != nil {
+			log.Printf("Failed to convert image: %v", err)
 			return nil, fmt.Errorf("failed to convert image: %v", err)
 		}
 		contentType = "image/jpeg"
+		log.Printf("Image converted to JPEG successfully")
 	}
 
 	var mediaType whatsmeow.MediaType
@@ -710,14 +935,22 @@ func prepareAttachmentMessage(attachment Attachment, targetJID types.JID) (*waPr
 	default:
 		mediaType = whatsmeow.MediaDocument
 	}
+
+	log.Printf("Uploading attachment to WhatsApp servers...")
 	uploaded, err := client.Upload(context.Background(), data, mediaType)
 	if err != nil {
+		log.Printf("Failed to upload attachment: %v", err)
 		return nil, fmt.Errorf("failed to upload attachment: %v", err)
 	}
 
+	log.Printf("Attachment uploaded successfully")
+	log.Printf("Upload URL: %s", uploaded.URL)
+	log.Printf("Direct Path: %s", uploaded.DirectPath)
+
+	var message *waProto.Message
 	switch attachment.Type {
 	case "image":
-		return &waProto.Message{
+		message = &waProto.Message{
 			ImageMessage: &waProto.ImageMessage{
 				URL:           &uploaded.URL,
 				DirectPath:    &uploaded.DirectPath,
@@ -728,13 +961,14 @@ func prepareAttachmentMessage(attachment Attachment, targetJID types.JID) (*waPr
 				FileEncSHA256: uploaded.FileEncSHA256,
 				FileSHA256:    uploaded.FileSHA256,
 			},
-		}, nil
+		}
+		log.Printf("Image message prepared successfully")
 	case "document":
 		filename := attachment.Filename
 		if filename == "" {
 			filename = "document"
 		}
-		return &waProto.Message{
+		message = &waProto.Message{
 			DocumentMessage: &waProto.DocumentMessage{
 				URL:           &uploaded.URL,
 				DirectPath:    &uploaded.DirectPath,
@@ -746,9 +980,10 @@ func prepareAttachmentMessage(attachment Attachment, targetJID types.JID) (*waPr
 				FileEncSHA256: uploaded.FileEncSHA256,
 				FileSHA256:    uploaded.FileSHA256,
 			},
-		}, nil
+		}
+		log.Printf("Document message prepared successfully")
 	case "audio":
-		return &waProto.Message{
+		message = &waProto.Message{
 			AudioMessage: &waProto.AudioMessage{
 				URL:           &uploaded.URL,
 				DirectPath:    &uploaded.DirectPath,
@@ -758,9 +993,10 @@ func prepareAttachmentMessage(attachment Attachment, targetJID types.JID) (*waPr
 				FileEncSHA256: uploaded.FileEncSHA256,
 				FileSHA256:    uploaded.FileSHA256,
 			},
-		}, nil
+		}
+		log.Printf("Audio message prepared successfully")
 	case "video":
-		return &waProto.Message{
+		message = &waProto.Message{
 			VideoMessage: &waProto.VideoMessage{
 				URL:           &uploaded.URL,
 				DirectPath:    &uploaded.DirectPath,
@@ -771,13 +1007,29 @@ func prepareAttachmentMessage(attachment Attachment, targetJID types.JID) (*waPr
 				FileEncSHA256: uploaded.FileEncSHA256,
 				FileSHA256:    uploaded.FileSHA256,
 			},
-		}, nil
+		}
+		log.Printf("Video message prepared successfully")
 	default:
+		log.Printf("Unsupported attachment type: %s", attachment.Type)
 		return nil, fmt.Errorf("unsupported attachment type: %s", attachment.Type)
 	}
+
+	log.Printf("=== ATTACHMENT PREPARATION COMPLETE ===")
+	return message, nil
 }
 
 func sendToWebhook(event, message, sender, chat string, attachment map[string]interface{}) {
+	log.Printf("=== WEBHOOK SENDING ===")
+	log.Printf("Event: %s", event)
+	log.Printf("Sender: %s", sender)
+	log.Printf("Chat: %s", chat)
+	log.Printf("Message: %s", message)
+	log.Printf("Webhook URL: %s", webhookURL)
+
+	if attachment != nil {
+		log.Printf("Attachment: %+v", attachment)
+	}
+
 	payload := WebhookPayload{
 		Event:      event,
 		Message:    message,
@@ -793,6 +1045,9 @@ func sendToWebhook(event, message, sender, chat string, attachment map[string]in
 		return
 	}
 
+	log.Printf("Webhook payload size: %d bytes", len(jsonData))
+	log.Printf("Sending webhook request...")
+
 	resp, err := http.Post(webhookURL, "application/json", bytes.NewBuffer(jsonData))
 	if err != nil {
 		log.Printf("Failed to send webhook: %v", err)
@@ -800,11 +1055,13 @@ func sendToWebhook(event, message, sender, chat string, attachment map[string]in
 	}
 	defer resp.Body.Close()
 
+	log.Printf("Webhook response status: %d", resp.StatusCode)
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		log.Printf("Webhook sent successfully to %s", webhookURL)
 	} else {
 		log.Printf("Webhook request failed with status: %d", resp.StatusCode)
 	}
+	log.Printf("=== WEBHOOK COMPLETE ===")
 }
 
 func main() {
@@ -818,6 +1075,7 @@ func main() {
 	r.HandleFunc("/pair", pairHandler).Methods("GET")
 	r.HandleFunc("/send", sendHandler).Methods("POST")
 	r.HandleFunc("/health", healthHandler).Methods("GET")
+	r.HandleFunc("/images/{filename}", imageHandler).Methods("GET")
 
 	// Serve Swagger documentation
 	r.HandleFunc("/swagger", swaggerHandler).Methods("GET")
@@ -834,6 +1092,7 @@ func main() {
 	log.Printf("  GET  /pair      - Generate QR code for pairing")
 	log.Printf("  POST /send      - Send message with attachments (requires pairing)")
 	log.Printf("  GET  /health    - Check service status")
+	log.Printf("  GET  /images/{filename} - Serve downloaded images")
 	log.Printf("  GET  /swagger   - API documentation info")
 	log.Printf("  GET  /swagger.yaml - Full OpenAPI specification")
 
