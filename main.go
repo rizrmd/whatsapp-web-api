@@ -39,7 +39,7 @@ var (
 	qrChannel  chan string
 	webhookURL string
 	isPaired   bool   = false
-	version    string = "v1.5.0"
+	version    string = "v1.6.0"
 )
 
 // Response structures for API
