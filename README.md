@@ -4,7 +4,28 @@
 
 ## 📋 Changelog
 
-### **v1.3.0** (Latest) - Enhanced Image Sending
+### **v1.6.0** (Latest) - Image Endpoint & Enhanced Webhooks
+- 🖼️ **Image Endpoint**: New `GET /images/{filename}` endpoint to serve downloaded images
+- 📡 **Enhanced Webhooks**: Image URLs now included in webhook attachment payloads
+- 📊 **Rich Metadata**: Comprehensive attachment metadata for all message types (images, documents, audio, video, stickers, contacts, locations)
+- 🔒 **Security Improvements**: Path traversal protection and input validation for image endpoint
+- 📝 **Better Logging**: Enhanced logging throughout the application with detailed message information
+- 🎯 **Content Type Detection**: Automatic MIME type detection for served images
+- ⚡ **Performance**: Optimized caching headers for image serving
+
+### **v1.5.0** - Enhanced Message Handling
+- 📊 **Detailed Logging**: Comprehensive message type analysis and logging
+- 🔄 **Improved Downloads**: Enhanced image download with detailed progress tracking
+- 📝 **Better Error Handling**: Improved error messages and debugging information
+- 🎯 **Attachment Processing**: Enhanced attachment preparation with better logging
+
+### **v1.4.0** - WebP Support & Typing Indicators
+- 🖼️ **WebP Support**: Added WebP image format support for incoming images
+- ⌨️ **Typing Indicators**: Send typing indicators before sending messages
+- 🔄 **Enhanced Conversion**: Improved image conversion and processing
+- 📊 **Better Metadata**: Enhanced attachment metadata handling
+
+### **v1.3.0** - Enhanced Image Sending
 - ✨ **Combined Messages**: Text + single image now sends as one message with caption
 - 🐛 **Fixed Image Display**: Resolved image rendering issues with proper DirectPath handling
 - 🔗 **URL-Only Attachments**: Removed base64 support, requires HTTP/HTTPS URLs only
@@ -27,13 +48,17 @@
 - **📱 QR Code Pairing**: Generate QR codes to pair WhatsApp accounts
 - **💬 Message Sending**: Send text messages and attachments (images, documents, audio, video) to any WhatsApp number via REST API
 - **🖼️ Smart Image Handling**: Combines text + single image into one message with caption
-- **🪝 Webhook Support**: Receive incoming messages via HTTP webhooks
+- **🖼️ Image Serving**: New endpoint to serve downloaded images with URL access
+- **🪝 Enhanced Webhooks**: Rich webhook payloads with attachment metadata and image URLs
+- **📊 Rich Metadata**: Comprehensive attachment information for all message types
 - **🗄️ PostgreSQL Storage**: Secure WhatsApp session persistence in PostgreSQL
 - **🔒 Auto SSL Handling**: Automatically configures PostgreSQL SSL mode
 - **📚 Complete Documentation**: Full OpenAPI 3.0 / Swagger specification
 - **🔄 Session Management**: Automatic reconnection and session handling
 - **⚡ High Performance**: Concurrent message handling and graceful shutdown
 - **🔗 URL-Only Attachments**: Secure attachment handling via HTTP/HTTPS URLs only
+- **🛡️ Security**: Path traversal protection and input validation
+- **📝 Detailed Logging**: Comprehensive logging for debugging and monitoring
 
 ## 📋 Requirements
 
@@ -253,7 +278,21 @@ Send a text message and/or attachments to a WhatsApp number.
 }
 ```
 
-### 4. API Documentation
+### 4. Image Serving
+```http
+GET /images/{filename}
+```
+
+Access downloaded images via secure endpoint. Images are automatically downloaded when received and can be accessed through this endpoint.
+
+**Parameters**:
+- `filename` (string, required): Image filename (e.g., `ABC123.jpg`)
+
+**Response**: Image file with appropriate content type headers
+
+**Example**: `http://localhost:8080/images/ABC123.jpg`
+
+### 5. API Documentation
 ```http
 GET /swagger
 GET /swagger.yaml
@@ -269,13 +308,13 @@ Access API documentation and OpenAPI specification.
 
 | Platform | Architecture | Download Command |
 |----------|-------------|------------------|
-| **Linux** | AMD64 (most servers) | `wget https://github.com/rizrmd/whatsapp-web-api/releases/download/v1.0.0/whatsapp-web-api-linux-amd64.zip` |
-| **Linux** | ARM64 (AWS Graviton) | `wget https://github.com/rizrmd/whatsapp-web-api/releases/download/v1.0.0/whatsapp-web-api-linux-arm64.zip` |
-| **Linux** | 32-bit | `wget https://github.com/rizrmd/whatsapp-web-api/releases/download/v1.0.0/whatsapp-web-api-linux-386.zip` |
-| **macOS** | Intel | `curl -L -o mac.zip https://github.com/rizrmd/whatsapp-web-api/releases/download/v1.0.0/whatsapp-web-api-darwin-amd64.zip` |
-| **macOS** | Apple Silicon | `curl -L -o mac.zip https://github.com/rizrmd/whatsapp-web-api/releases/download/v1.0.0/whatsapp-web-api-darwin-arm64.zip` |
-| **Windows** | 64-bit | Download: [whatsapp-web-api-windows-amd64.exe.zip](https://github.com/rizrmd/whatsapp-web-api/releases/download/v1.0.0/whatsapp-web-api-windows-amd64.exe.zip) |
-| **Windows** | 32-bit | Download: [whatsapp-web-api-windows-386.exe.zip](https://github.com/rizrmd/whatsapp-web-api/releases/download/v1.0.0/whatsapp-web-api-windows-386.exe.zip) |
+| **Linux** | AMD64 (most servers) | `wget https://github.com/rizrmd/whatsapp-web-api/releases/download/v1.6.0/whatsapp-web-api-linux-amd64.zip` |
+| **Linux** | ARM64 (AWS Graviton) | `wget https://github.com/rizrmd/whatsapp-web-api/releases/download/v1.6.0/whatsapp-web-api-linux-arm64.zip` |
+| **Linux** | 32-bit | `wget https://github.com/rizrmd/whatsapp-web-api/releases/download/v1.6.0/whatsapp-web-api-linux-386.zip` |
+| **macOS** | Intel | `curl -L -o mac.zip https://github.com/rizrmd/whatsapp-web-api/releases/download/v1.6.0/whatsapp-web-api-darwin-amd64.zip` |
+| **macOS** | Apple Silicon | `curl -L -o mac.zip https://github.com/rizrmd/whatsapp-web-api/releases/download/v1.6.0/whatsapp-web-api-darwin-arm64.zip` |
+| **Windows** | 64-bit | Download: [whatsapp-web-api-windows-amd64.exe.zip](https://github.com/rizrmd/whatsapp-web-api/releases/download/v1.6.0/whatsapp-web-api-windows-amd64.exe.zip) |
+| **Windows** | 32-bit | Download: [whatsapp-web-api-windows-386.exe.zip](https://github.com/rizrmd/whatsapp-web-api/releases/download/v1.6.0/whatsapp-web-api-windows-386.exe.zip) |
 
 2. **Extract and make executable**:
    ```bash
@@ -382,7 +421,7 @@ sudo systemctl status whatsapp-api
 #### **Automated Deployment** (included with binary):
 ```bash
 # Download and run the automated deployment script
-wget https://github.com/rizrmd/whatsapp-web-api/releases/download/v1.0.0/whatsapp-web-api-linux-amd64.zip
+wget https://github.com/rizrmd/whatsapp-web-api/releases/download/v1.6.0/whatsapp-web-api-linux-amd64.zip
 unzip whatsapp-web-api-linux-amd64.zip
 DATABASE_URL="postgres://user:pass@host:5432/db" sudo ./deploy-linux.sh
 ```
@@ -393,7 +432,7 @@ Always verify downloaded binaries:
 
 ```bash
 # Download checksums
-wget https://github.com/rizrmd/whatsapp-web-api/releases/download/v1.0.0/checksums.txt
+wget https://github.com/rizrmd/whatsapp-web-api/releases/download/v1.6.0/checksums.txt
 
 # Verify your binary
 sha256sum whatsapp-web-api-linux-amd64.zip
@@ -505,6 +544,21 @@ result = send_whatsapp_message("1234567890", "Here's the document", [
     }
 ])
 print(result)
+
+# Access downloaded image (from webhook)
+def download_image(image_filename, save_path):
+    url = f"http://localhost:8080/images/{image_filename}"
+    response = requests.get(url)
+    
+    if response.status_code == 200:
+        with open(save_path, 'wb') as f:
+            f.write(response.content)
+        print(f"Image saved to {save_path}")
+    else:
+        print(f"Failed to download image: {response.status_code}")
+
+# Example usage after receiving webhook with image URL
+# download_image("ABC123.jpg", "downloaded_image.jpg")
 ```
 
 ## 🪝 Webhook Integration
@@ -518,9 +572,27 @@ When `WA_WEBHOOK_URL` is configured, incoming messages are sent as POST requests
   "message": "Hello there!",
   "sender": "1234567890@s.whatsapp.net",
   "chat": "1234567890-1234567890@g.us",
-  "time": "2025-10-25T16:07:24Z"
+  "time": "2025-10-25T16:07:24Z",
+  "attachment": {
+    "type": "image",
+    "caption": "vacation photo",
+    "mimetype": "image/jpeg",
+    "file_length": 1024000,
+    "width": 1920,
+    "height": 1080,
+    "url": "/images/ABC123.jpg"
+  }
 }
 ```
+
+**Enhanced Attachment Support**:
+- **Images**: Dimensions, file size, caption, and accessible URL
+- **Documents**: Title, MIME type, file size, page count
+- **Audio**: Duration, MIME type, file size
+- **Video**: Dimensions, duration, caption, MIME type, file size
+- **Stickers**: Dimensions, MIME type, file size
+- **Contacts**: Display name, vCard data
+- **Locations**: Name, address, coordinates
 
 **Webhook Server Example (Node.js)**:
 ```javascript
@@ -644,6 +716,13 @@ psql $DATABASE_URL
 - ✅ Test attachment URLs in browser to ensure they're accessible
 - ✅ For single image + text: Text becomes image caption (combined message)
 - ✅ For multiple images: Each image sends as separate message
+
+### Image Access Issues
+- ✅ Images are automatically downloaded to `downloads/` directory
+- ✅ Access images via `/images/{filename}` endpoint
+- ✅ Check if image file exists in downloads directory
+- ✅ Verify webhook payload contains correct image URL
+- ✅ Images are served with appropriate MIME types and caching headers
 
 ### Server Issues
 ```bash
