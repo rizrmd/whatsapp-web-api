@@ -39,7 +39,7 @@ var (
 	qrChannel  chan string
 	webhookURL string
 	isPaired   bool   = false
-	version    string = "v1.6.0"
+	version    string = "v1.7.0"
 )
 
 // Response structures for API
@@ -102,6 +102,8 @@ func getDatabaseURL() string {
 }
 
 func initializeWhatsApp() {
+	log.Println("=== INITIALIZING WHATSAPP CLIENT ===")
+
 	// Get database URL from environment
 	dbURL := getDatabaseURL()
 
@@ -124,17 +126,28 @@ func initializeWhatsApp() {
 	// Add event handlers
 	client.AddEventHandler(handler)
 
-	// Check if already paired
+	// Check if already paired and attempt connection with better error handling
 	if client.Store.ID != nil {
+		log.Printf("Found existing session for device: %s", client.Store.ID.String())
 		isPaired = true
-		// Connect to existing session
+
+		// Attempt to connect to existing session
+		log.Println("Attempting to connect to existing session...")
 		err = client.Connect()
 		if err != nil {
 			log.Printf("Failed to connect to existing session: %v", err)
+			log.Println("💡 This could be due to:")
+			log.Println("   - Device being disconnected from WhatsApp mobile app")
+			log.Println("   - Device limit exceeded on WhatsApp account")
+			log.Println("   - Network connectivity issues")
+			log.Println("   - Session corruption")
+			log.Println("💡 Use /pair endpoint to create a new session")
 			isPaired = false
 		} else {
-			log.Println("Connected to WhatsApp with existing session")
+			log.Println("🟢 Successfully connected to WhatsApp with existing session")
 		}
+	} else {
+		log.Println("No existing session found - use /pair endpoint to create one")
 	}
 
 	// Get webhook URL from environment
@@ -142,51 +155,68 @@ func initializeWhatsApp() {
 	if webhookURL != "" {
 		log.Println("Webhook URL configured:", webhookURL)
 	}
+
+	log.Println("=== WHATSAPP CLIENT INITIALIZATION COMPLETE ===")
 }
 
 // /pair endpoint - generate QR code for pairing
 func pairHandler(w http.ResponseWriter, r *http.Request) {
+	log.Println("=== PAIRING REQUEST STARTED ===")
+
 	// If already paired or connected, disconnect and clear session first
-	if client.IsConnected() {
+	if client != nil && client.IsConnected() {
+		log.Println("Disconnecting existing session...")
 		client.Disconnect()
 		isPaired = false
 		log.Println("Disconnected from previous session")
 	}
 
 	// Clear existing session if any
-	if client.Store.ID != nil {
+	if client != nil && client.Store != nil && client.Store.ID != nil {
+		log.Printf("Clearing existing session for device: %s", client.Store.ID.String())
 		err := client.Store.Delete(context.Background())
 		if err != nil {
 			log.Printf("Warning: Failed to clear existing session: %v", err)
+		} else {
+			log.Println("Existing session cleared successfully")
 		}
 	}
 
 	// Add a small delay to ensure proper disconnection
-	time.Sleep(1 * time.Second)
+	time.Sleep(2 * time.Second)
 
 	// Get QR channel (must be called before connecting)
+	log.Println("Getting QR channel...")
 	qrChan, err := client.GetQRChannel(context.Background())
 	if err != nil {
+		log.Printf("Failed to get QR channel: %v", err)
 		http.Error(w, fmt.Sprintf("Failed to get QR channel: %v", err), http.StatusInternalServerError)
 		return
 	}
 
 	// Connect client after getting QR channel
+	log.Println("Connecting to WhatsApp...")
 	err = client.Connect()
 	if err != nil {
+		log.Printf("Failed to connect: %v", err)
 		http.Error(w, fmt.Sprintf("Failed to connect: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	// Wait for QR code
+	log.Println("Connected successfully, waiting for QR code...")
+
+	// Wait for QR code with extended timeout
 	select {
 	case evt := <-qrChan:
+		log.Printf("QR event received: %s", evt.Event)
 		if evt.Event == "code" {
 			qrCode := evt.Code
+			log.Printf("QR code generated, length: %d", len(qrCode))
 
 			// Generate QR code as PNG image
 			qr, err := qrcode.New(qrCode, qrcode.Medium)
 			if err != nil {
+				log.Printf("Failed to generate QR code: %v", err)
 				http.Error(w, fmt.Sprintf("Failed to generate QR code: %v", err), http.StatusInternalServerError)
 				return
 			}
@@ -200,41 +230,65 @@ func pairHandler(w http.ResponseWriter, r *http.Request) {
 			// Encode and send the image
 			err = png.Encode(w, qr.Image(256))
 			if err != nil {
+				log.Printf("Failed to encode QR image: %v", err)
 				http.Error(w, fmt.Sprintf("Failed to encode QR image: %v", err), http.StatusInternalServerError)
 				return
 			}
 
 			log.Println("QR code image generated successfully")
+			log.Println("=== PAIRING REQUEST COMPLETED ===")
 
 			// Handle QR events in background
 			go handleQREvents(qrChan)
 			return
 		} else {
+			log.Printf("QR generation error: %s", evt.Event)
+			if evt.Error != nil {
+				log.Printf("QR error details: %v", evt.Error)
+			}
 			http.Error(w, fmt.Sprintf("QR generation error: %s", evt.Event), http.StatusInternalServerError)
 			return
 		}
-	case <-time.After(10 * time.Second):
-		http.Error(w, "QR code generation timeout", http.StatusRequestTimeout)
+	case <-time.After(15 * time.Second):
+		log.Println("QR code generation timeout after 15 seconds")
+		http.Error(w, "QR code generation timeout - please try again", http.StatusRequestTimeout)
 		return
 	}
 }
 
 func handleQREvents(qrChan <-chan whatsmeow.QRChannelItem) {
+	log.Println("=== QR EVENT HANDLER STARTED ===")
 	for evt := range qrChan {
+		log.Printf("QR Event: %s", evt.Event)
 		switch evt.Event {
 		case "success":
 			isPaired = true
-			log.Println("Successfully paired with WhatsApp!")
+			log.Println("🎉 Successfully paired with WhatsApp!")
+			log.Printf("Device ID: %s", client.Store.ID.String())
 		case "timeout":
-			log.Println("QR code pairing timed out.")
+			log.Println("⏰ QR code pairing timed out.")
+			log.Println("💡 Tips: Check if WhatsApp is open on your phone and try scanning again")
 		case "err-client-outdated":
-			log.Println("Client is outdated. Please update the library.")
+			log.Println("🔄 Client is outdated. Please update the application.")
 		case "err-scanned-without-multidevice":
-			log.Println("QR code was scanned but multidevice is not enabled on the phone.")
+			log.Println("📱 QR code was scanned but multi-device is not enabled on the phone.")
+			log.Println("💡 Solution: Go to WhatsApp Settings > Linked Devices > Enable multi-device")
+		case "err-device-limit-exceeded":
+			log.Println("🚫 Device limit exceeded on WhatsApp account.")
+			log.Println("💡 Solution: Remove unused devices from WhatsApp Settings > Linked Devices")
+		case "err-already-connected":
+			log.Println("⚠️ Device is already connected to another session.")
+			log.Println("💡 Solution: Disconnect other devices first")
 		case "error":
-			log.Printf("QR pairing error: %v\n", evt.Error)
+			log.Printf("❌ QR pairing error: %v", evt.Error)
+			if evt.Error != nil {
+				log.Printf("Error details: %s", evt.Error.Error())
+			}
+		default:
+			log.Printf("❓ Unknown QR event: %s", evt.Event)
 		}
 	}
+	log.Println("=== QR EVENT HANDLER ENDED ===")
 }
 
 // /send endpoint - send message to a number
@@ -415,6 +469,83 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
+// Device management endpoint
+func devicesHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	if client == nil {
+		response := APIResponse{
+			Success: false,
+			Message: "Client not initialized",
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	deviceInfo := map[string]interface{}{
+		"connected": client.IsConnected(),
+		"paired":    isPaired,
+	}
+
+	// Only add device info if store exists and has ID
+	if client.Store != nil && client.Store.ID != nil {
+		deviceInfo["device_id"] = client.Store.ID.String()
+		deviceInfo["jid"] = client.Store.ID
+		deviceInfo["phone"] = client.Store.ID.User
+	} else {
+		deviceInfo["device_id"] = nil
+		deviceInfo["jid"] = nil
+		deviceInfo["phone"] = nil
+	}
+
+	response := APIResponse{
+		Success: true,
+		Message: "Device information retrieved",
+		Data:    deviceInfo,
+	}
+	json.NewEncoder(w).Encode(response)
+}
+
+// Disconnect endpoint
+func disconnectHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	if client == nil {
+		response := APIResponse{
+			Success: false,
+			Message: "Client not initialized",
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Disconnect if connected
+	if client.IsConnected() {
+		client.Disconnect()
+		log.Println("Manually disconnected from WhatsApp")
+	}
+
+	// Clear session
+	if client.Store.ID != nil {
+		err := client.Store.Delete(context.Background())
+		if err != nil {
+			log.Printf("Warning: Failed to clear session during disconnect: %v", err)
+		} else {
+			log.Println("Session cleared successfully")
+		}
+	}
+
+	isPaired = false
+
+	response := APIResponse{
+		Success: true,
+		Message: "Successfully disconnected and session cleared",
+	}
+	json.NewEncoder(w).Encode(response)
+}
+
 // Image endpoint - serve downloaded images
 func imageHandler(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
@@ -497,16 +628,26 @@ func handler(rawEvt interface{}) {
 	case *events.Message:
 		handleMessage(evt)
 	case *events.Connected:
-		log.Println("Connected to WhatsApp!")
+		log.Println("🟢 Connected to WhatsApp!")
+		if client.Store.ID != nil {
+			log.Printf("Device ID: %s", client.Store.ID.String())
+		}
 	case *events.Disconnected:
-		log.Println("Disconnected from WhatsApp")
+		log.Println("🔴 Disconnected from WhatsApp")
 		isPaired = false
 	case *events.PairSuccess:
-		log.Printf("Successfully paired! Device: %s\n", evt.ID)
+		log.Printf("🎉 Successfully paired! Device: %s", evt.ID)
 		isPaired = true
 	case *events.LoggedOut:
-		log.Println("Logged out from WhatsApp")
+		log.Println("🔒 Logged out from WhatsApp")
+		log.Println("💡 This may happen if another device connects or if you log out from WhatsApp mobile app")
 		isPaired = false
+	case *events.StreamError:
+		log.Printf("🚫 Stream error occurred")
+		log.Println("💡 This may indicate connection issues or device limit problems")
+	case *events.ConnectFailure:
+		log.Printf("❌ Connection failed: %v", evt.Reason)
+		log.Println("💡 Check your internet connection and WhatsApp device limits")
 	}
 }
 
@@ -1075,6 +1216,8 @@ func main() {
 	r.HandleFunc("/pair", pairHandler).Methods("GET")
 	r.HandleFunc("/send", sendHandler).Methods("POST")
 	r.HandleFunc("/health", healthHandler).Methods("GET")
+	r.HandleFunc("/devices", devicesHandler).Methods("GET")
+	r.HandleFunc("/disconnect", disconnectHandler).Methods("POST")
 	r.HandleFunc("/images/{filename}", imageHandler).Methods("GET")
 
 	// Serve Swagger documentation
@@ -1092,6 +1235,8 @@ func main() {
 	log.Printf("  GET  /pair      - Generate QR code for pairing")
 	log.Printf("  POST /send      - Send message with attachments (requires pairing)")
 	log.Printf("  GET  /health    - Check service status")
+	log.Printf("  GET  /devices   - Get device information")
+	log.Printf("  POST /disconnect - Disconnect and clear session")
 	log.Printf("  GET  /images/{filename} - Serve downloaded images")
 	log.Printf("  GET  /swagger   - API documentation info")
 	log.Printf("  GET  /swagger.yaml - Full OpenAPI specification")

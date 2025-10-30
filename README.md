@@ -4,7 +4,28 @@
 
 ## 📋 Changelog
 
-### **v1.6.0** (Latest) - Image Endpoint & Enhanced Webhooks
+### **v1.7.0** (Latest) - Enhanced Troubleshooting & Testing Tools
+- 📖 **Comprehensive Troubleshooting Guide**: New `TROUBLESHOOTING.md` with detailed solutions for common issues
+- 🧪 **Endpoint Testing Script**: New `test_endpoints.sh` for automated API endpoint testing
+- 🔧 **Enhanced Device Management**: Improved device information and session control endpoints
+- 📊 **Rich Logging System**: Comprehensive emoji-based logging for better debugging and monitoring
+- 🚨 **Advanced Error Handling**: Better detection and guidance for WhatsApp device limits and connection issues
+- ⏰ **Optimized Timeouts**: Extended QR code timeout and improved connection handling
+- 🛠️ **Session Management**: Enhanced session cleanup and recovery mechanisms
+- 💡 **Built-in Guidance**: Actionable suggestions and tips directly in error messages and logs
+- 🎯 **Production Ready**: Improved stability and reliability for production deployments
+
+### **v1.6.1** - Device Management & Enhanced Error Handling
+- 🔧 **Device Management**: New `GET /devices` endpoint to view current device information
+- 🔄 **Session Control**: New `POST /disconnect` endpoint to manually disconnect and clear sessions
+- 📊 **Enhanced Logging**: Comprehensive logging with emojis for better debugging
+- 🚫 **Device Limit Detection**: Better error messages for WhatsApp device limit issues
+- ⏰ **Extended QR Timeout**: Increased QR code generation timeout to 15 seconds
+- 🛠️ **Improved Session Cleanup**: Better handling of stale sessions on startup
+- 💡 **Troubleshooting Tips**: Built-in guidance for common pairing issues
+- 🎯 **Error Recovery**: Enhanced error handling with actionable suggestions
+
+### **v1.6.0** - Image Endpoint & Enhanced Webhooks
 - 🖼️ **Image Endpoint**: New `GET /images/{filename}` endpoint to serve downloaded images
 - 📡 **Enhanced Webhooks**: Image URLs now included in webhook attachment payloads
 - 📊 **Rich Metadata**: Comprehensive attachment metadata for all message types (images, documents, audio, video, stickers, contacts, locations)
@@ -278,7 +299,43 @@ Send a text message and/or attachments to a WhatsApp number.
 }
 ```
 
-### 4. Image Serving
+### 4. Device Information
+```http
+GET /devices
+```
+
+Get information about the currently connected WhatsApp device.
+
+**Response**:
+```json
+{
+  "success": true,
+  "message": "Device information retrieved",
+  "data": {
+    "device_id": "1234567890@s.whatsapp.net",
+    "jid": "1234567890@s.whatsapp.net",
+    "connected": true,
+    "paired": true
+  }
+}
+```
+
+### 5. Disconnect Session
+```http
+POST /disconnect
+```
+
+Manually disconnect from WhatsApp and clear the current session. Useful for troubleshooting or when you need to pair a new device.
+
+**Response**:
+```json
+{
+  "success": true,
+  "message": "Successfully disconnected and session cleared"
+}
+```
+
+### 6. Image Serving
 ```http
 GET /images/{filename}
 ```
@@ -292,7 +349,7 @@ Access downloaded images via secure endpoint. Images are automatically downloade
 
 **Example**: `http://localhost:8080/images/ABC123.jpg`
 
-### 5. API Documentation
+### 7. API Documentation
 ```http
 GET /swagger
 GET /swagger.yaml
@@ -703,9 +760,47 @@ psql $DATABASE_URL
 
 ### Pairing Problems
 - ✅ Enable multi-device in WhatsApp Settings
-- ✅ Scan QR code within timeout (60 seconds)
+- ✅ Scan QR code within timeout (15 seconds)
 - ✅ Ensure stable internet connection
 - ✅ Check WhatsApp app is updated
+- ✅ **Device Limits**: WhatsApp allows maximum 4 connected devices per account
+- ✅ **Check Connected Devices**: Go to WhatsApp Settings > Linked Devices to see current connections
+- ✅ **Remove Old Devices**: Disconnect unused devices from WhatsApp mobile app
+- ✅ **Use New Endpoints**: 
+  - `GET /devices` - Check current device status
+  - `POST /disconnect` - Clean up problematic sessions
+- ✅ **Session Cleanup**: If pairing fails, try disconnecting first, then pair again
+
+### Device Limit Issues
+WhatsApp has a **4-device limit** per account. If you're experiencing pairing issues:
+
+1. **Check Connected Devices**:
+   ```bash
+   curl http://localhost:8080/devices
+   ```
+
+2. **Remove Unused Devices**:
+   - Open WhatsApp mobile app
+   - Go to Settings > Linked Devices
+   - Tap and hold on unused devices
+   - Select "Log out"
+
+3. **Clean Current Session**:
+   ```bash
+   curl -X POST http://localhost:8080/disconnect
+   ```
+
+4. **Try Pairing Again**:
+   ```bash
+   curl http://localhost:8080/pair
+   ```
+
+### Connection Issues
+- ✅ **Check Device Status**: Use `GET /health` and `GET /devices` endpoints
+- ✅ **Network Stability**: Ensure stable internet connection on both server and phone
+- ✅ **Session Corruption**: If connection fails, use `POST /disconnect` to clear session
+- ✅ **WhatsApp Updates**: Keep WhatsApp mobile app updated
+- ✅ **Multi-Device**: Ensure multi-device is enabled in WhatsApp settings
 
 ### Message Sending Issues
 - ✅ Verify pairing with `/health` endpoint
